@@ -38,7 +38,10 @@ Comandos:
   normalize              Normaliza raw_listings → listings
   analyze                Gera market snapshots e atualiza bairros
   hunt                   Pontua terrenos e gera oportunidades
-  pipeline               Roda collect + normalize + analyze + hunt
+  dedup                  Deduplicação cross-portal
+  enrich                 Geocoding de listings sem coordenadas
+  viability              Simulação de viabilidade MCMV
+  pipeline               Roda collect → normalize → analyze → hunt
 """.strip()
 
 
@@ -136,6 +139,21 @@ def main() -> None:
         run_analyze()
     elif command == "hunt":
         run_hunt()
+    elif command == "dedup":
+        from src.deduplicator import run_deduplicator
+        logger.info("=== Starting deduplicator ===")
+        s = run_deduplicator()
+        logger.info(f"=== Dedup done: {s['matches']} matches ({s['high_confidence']} high confidence) ===")
+    elif command == "enrich":
+        from src.enricher import run_enricher
+        logger.info("=== Starting enricher ===")
+        s = run_enricher()
+        logger.info(f"=== Enricher done: {s['geocoded']} geocoded of {s['processed']} ===")
+    elif command == "viability":
+        from src.viability import run_viability
+        logger.info("=== Starting viability ===")
+        s = run_viability()
+        logger.info(f"=== Viability done: {s['viable']} viable of {s['analyzed']} ===")
     elif command == "pipeline":
         names = args[1:] if len(args) > 1 else None
         asyncio.run(run_pipeline(names))
