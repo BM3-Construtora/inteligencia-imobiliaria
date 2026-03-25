@@ -9,6 +9,9 @@ from typing import Optional, List
 
 from src.collectors.uniao import UniaoCollector
 from src.collectors.toca import TocaCollector
+from src.collectors.vivareal import VivaRealCollector
+from src.collectors.chavesnamao import ChavesNaMaoCollector
+from src.collectors.imovelweb import ImovelwebCollector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +23,9 @@ logger = logging.getLogger("mariliabot")
 COLLECTORS = {
     "uniao": UniaoCollector,
     "toca": TocaCollector,
+    "vivareal": VivaRealCollector,
+    "chavesnamao": ChavesNaMaoCollector,
+    "imovelweb": ImovelwebCollector,
 }
 
 USAGE = """

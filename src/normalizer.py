@@ -231,12 +231,92 @@ def normalize_toca(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 # ============================================================
+# HTML scrapers normalizer (VivaReal, Chaves na Mão, Imovelweb)
+# ============================================================
+
+def normalize_html_scraper(source: str, raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a raw listing from any HTML scraper.
+
+    All three HTML scrapers (vivareal, chavesnamao, imovelweb) produce
+    a similar flat dict with: id, url, name/title, type, price, area,
+    bedrooms, bathrooms, parking, neighborhood, city, state, images/image_url.
+    """
+    prop_type = raw.get("type", "other")
+    if prop_type not in (
+        "house", "apartment", "land", "commercial", "rural",
+        "condo_house", "farm", "other",
+    ):
+        prop_type = "other"
+
+    sale_price = _safe_float(raw.get("price"))
+    total_area = _safe_float(raw.get("area"))
+
+    # Images
+    images = raw.get("images", [])
+    main_image_url = raw.get("image_url")
+    if not main_image_url and images:
+        main_image_url = images[0]
+
+    return {
+        "source": source,
+        "source_id": str(raw["id"]),
+        "url": raw.get("url"),
+        "property_type": prop_type,
+        "business_type": "sale",
+        "title": raw.get("name") or raw.get("title"),
+        "address": raw.get("street"),
+        "street": raw.get("street"),
+        "number": None,
+        "complement": None,
+        "neighborhood": raw.get("neighborhood"),
+        "city": raw.get("city", "Marília"),
+        "state": raw.get("state", "SP"),
+        "zip_code": None,
+        "latitude": None,
+        "longitude": None,
+        "sale_price": sale_price,
+        "rent_price": None,
+        "condominium_fee": None,
+        "iptu": None,
+        "price_per_m2": _calc_price_per_m2(sale_price, total_area),
+        "total_area": total_area,
+        "built_area": None,
+        "bedrooms": _safe_int(raw.get("bedrooms")),
+        "bathrooms": _safe_int(raw.get("bathrooms")),
+        "suites": None,
+        "parking_spaces": _safe_int(raw.get("parking")),
+        "description": raw.get("description", ""),
+        "features": [],
+        "is_mcmv": False,
+        "is_featured": False,
+        "is_active": True,
+        "main_image_url": main_image_url,
+        "images": images if images else ([main_image_url] if main_image_url else []),
+    }
+
+
+def normalize_vivareal(raw: dict[str, Any]) -> dict[str, Any]:
+    return normalize_html_scraper("vivareal", raw)
+
+
+def normalize_chavesnamao(raw: dict[str, Any]) -> dict[str, Any]:
+    return normalize_html_scraper("chavesnamao", raw)
+
+
+def normalize_imovelweb(raw: dict[str, Any]) -> dict[str, Any]:
+    return normalize_html_scraper("imovelweb", raw)
+
+
+# ============================================================
 # Dispatcher
 # ============================================================
 
 NORMALIZERS = {
     "uniao": normalize_uniao,
     "toca": normalize_toca,
+    "vivareal": normalize_vivareal,
+    "chavesnamao": normalize_chavesnamao,
+    "imovelweb": normalize_imovelweb,
 }
 
 
