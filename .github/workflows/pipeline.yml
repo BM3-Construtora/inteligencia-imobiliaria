@@ -1,0 +1,58 @@
+name: MaríliaBot Pipeline
+
+on:
+  schedule:
+    # Roda todo dia às 6h e 18h (horário de Brasília = 9h e 21h UTC)
+    - cron: '0 9 * * *'
+    - cron: '0 21 * * *'
+  workflow_dispatch:  # Permite rodar manualmente
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+  TOCA_SUPABASE_URL: ${{ secrets.TOCA_SUPABASE_URL }}
+  TOCA_ANON_KEY: ${{ secrets.TOCA_ANON_KEY }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  MAX_PAGES_PER_SPIDER: '30'
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Collect — APIs (União + Toca)
+        run: python -m src.main collect uniao toca
+
+      - name: Collect — HTML scrapers
+        run: python -m src.main collect vivareal chavesnamao imovelweb
+        continue-on-error: true  # Cloudflare pode bloquear
+
+      - name: Normalize
+        run: python -m src.main normalize
+
+      - name: Analyze
+        run: python -m src.main analyze
+
+      - name: Hunt
+        run: python -m src.main hunt
+
+      - name: Deduplicate
+        run: python -m src.main dedup
+
+      - name: Notify (Telegram)
+        if: env.TELEGRAM_BOT_TOKEN != ''
+        run: python -m src.main notify

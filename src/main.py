@@ -40,8 +40,10 @@ Comandos:
   hunt                   Pontua terrenos e gera oportunidades
   dedup                  Deduplicação cross-portal
   enrich                 Geocoding de listings sem coordenadas
+  enrich-llm             Enriquecimento com Claude Haiku (atributos + bairros)
   viability              Simulação de viabilidade MCMV
-  pipeline               Roda collect → normalize → analyze → hunt
+  notify                 Envia alertas Telegram para oportunidades
+  pipeline               Roda collect → normalize → analyze → hunt → notify
 """.strip()
 
 
@@ -112,12 +114,22 @@ def run_hunt() -> None:
     )
 
 
+def run_notify() -> None:
+    """Run the notifier."""
+    from src.notifier import run_notifier
+
+    logger.info("=== Starting notifier ===")
+    stats = run_notifier()
+    logger.info(f"=== Notifier done: {stats['notified']} sent ===")
+
+
 async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
-    """Run full pipeline: collect → normalize → analyze → hunt."""
+    """Run full pipeline: collect → normalize → analyze → hunt → notify."""
     await run_collectors(collector_names)
     run_normalize()
     run_analyze()
     run_hunt()
+    run_notify()
 
 
 def main() -> None:
@@ -149,11 +161,21 @@ def main() -> None:
         logger.info("=== Starting enricher ===")
         s = run_enricher()
         logger.info(f"=== Enricher done: {s['geocoded']} geocoded of {s['processed']} ===")
+    elif command == "enrich-llm":
+        from src.enricher_llm import run_llm_enricher
+        logger.info("=== Starting LLM enricher ===")
+        s = run_llm_enricher()
+        logger.info(f"=== LLM Enricher done: {s['enriched']} enriched, {s['neighborhoods_normalized']} neighborhoods ===")
     elif command == "viability":
         from src.viability import run_viability
         logger.info("=== Starting viability ===")
         s = run_viability()
         logger.info(f"=== Viability done: {s['viable']} viable of {s['analyzed']} ===")
+    elif command == "notify":
+        from src.notifier import run_notifier
+        logger.info("=== Starting notifier ===")
+        s = run_notifier()
+        logger.info(f"=== Notifier done: {s['notified']} sent ===")
     elif command == "pipeline":
         names = args[1:] if len(args) > 1 else None
         asyncio.run(run_pipeline(names))
