@@ -139,79 +139,95 @@ def _get_market_context(db: Any) -> dict[str, float]:
     }
 
 
+# Source confidence weights — based on data quality audit
+# Applied as a multiplier to the raw score
+SOURCE_CONFIDENCE = {
+    "uniao": 1.00,       # Tier 1: GPS, endereço, MCMV flag, API estruturada
+    "toca": 1.00,        # Tier 1: GPS, preço 100%, zona do bairro
+    "vivareal": 0.85,    # Tier 2: bons dados preço/área, sem geo
+    "chavesnamao": 0.80,  # Tier 2: muitos terrenos, área ~52% confiável
+    "imovelweb": 0.70,   # Tier 3: poucos dados, área 32%, Cloudflare
+}
+
+
 def _score_listing(
     listing: dict[str, Any],
     context: dict[str, float],
 ) -> tuple[float, dict[str, Any]]:
     """Score a single land listing. Returns (score, breakdown).
 
-    Score is 0-100 based on:
-    - price_score (30pts): lower price = better
-    - price_m2_score (25pts): lower price/m² = better
-    - area_score (20pts): larger area = better (up to a point)
-    - mcmv_score (15pts): MCMV compatible = bonus
+    Raw score is 0-100 based on:
+    - price_score (25pts): lower price = better
+    - price_m2_score (20pts): lower price/m² = better
+    - area_score (15pts): larger area = better (up to a point)
+    - mcmv_score (10pts): MCMV compatible = bonus
     - location_score (10pts): has coordinates = bonus, known neighborhood = bonus
+    - data_quality (10pts): completeness of fields for this listing
+    - source_confidence (10pts): reliability of the source
+
+    Final score = raw_score * source_confidence_multiplier
     """
     breakdown: dict[str, Any] = {}
+    source = listing.get("source", "")
     price = float(listing.get("sale_price") or 0)
     area = float(listing.get("total_area") or 0)
     price_m2 = float(listing.get("price_per_m2") or 0)
 
-    # --- Price score (30pts): better if below max, best if way below ---
+    # --- Price score (25pts): better if below max, best if way below ---
     if price <= 0:
         breakdown["price"] = 0
     elif price <= SCORING_MAX_PRICE * 0.5:
-        breakdown["price"] = 30  # Amazing deal
-    elif price <= SCORING_MAX_PRICE * 0.75:
         breakdown["price"] = 25
-    elif price <= SCORING_MAX_PRICE:
+    elif price <= SCORING_MAX_PRICE * 0.75:
         breakdown["price"] = 20
+    elif price <= SCORING_MAX_PRICE:
+        breakdown["price"] = 17
     elif price <= SCORING_MAX_PRICE * 1.5:
-        breakdown["price"] = 10
+        breakdown["price"] = 8
     elif price <= SCORING_MAX_PRICE * 2:
-        breakdown["price"] = 5
+        breakdown["price"] = 4
     else:
         breakdown["price"] = 0
 
-    # --- Price per m² score (25pts): relative to market ---
+    # --- Price per m² score (20pts): relative to market ---
     if price_m2 <= 0:
-        breakdown["price_m2"] = 5  # No data, neutral
+        breakdown["price_m2"] = 0  # No data = no points (was 5 before, rewarded missing data)
     elif price_m2 <= SCORING_IDEAL_PRICE_M2 * 0.5:
-        breakdown["price_m2"] = 25
-    elif price_m2 <= SCORING_IDEAL_PRICE_M2:
         breakdown["price_m2"] = 20
+    elif price_m2 <= SCORING_IDEAL_PRICE_M2:
+        breakdown["price_m2"] = 17
     elif price_m2 <= context.get("avg_price_m2", 500):
-        breakdown["price_m2"] = 15
+        breakdown["price_m2"] = 12
     elif price_m2 <= context.get("avg_price_m2", 500) * 1.5:
-        breakdown["price_m2"] = 8
+        breakdown["price_m2"] = 6
     else:
         breakdown["price_m2"] = 0
 
-    # --- Area score (20pts): prefer >= SCORING_MIN_AREA ---
+    # --- Area score (15pts): prefer >= SCORING_MIN_AREA ---
     if area <= 0:
-        breakdown["area"] = 5  # No data
+        breakdown["area"] = 0  # No data = no points
     elif area >= SCORING_MIN_AREA * 2:
-        breakdown["area"] = 20
-    elif area >= SCORING_MIN_AREA * 1.5:
-        breakdown["area"] = 18
-    elif area >= SCORING_MIN_AREA:
         breakdown["area"] = 15
+    elif area >= SCORING_MIN_AREA * 1.5:
+        breakdown["area"] = 13
+    elif area >= SCORING_MIN_AREA:
+        breakdown["area"] = 11
     elif area >= SCORING_MIN_AREA * 0.75:
-        breakdown["area"] = 10
+        breakdown["area"] = 7
     elif area >= SCORING_MIN_AREA * 0.5:
-        breakdown["area"] = 5
+        breakdown["area"] = 4
     else:
         breakdown["area"] = 2
 
-    # --- MCMV score (15pts) ---
+    # --- MCMV score (10pts) ---
     is_mcmv = listing.get("is_mcmv", False)
     mcmv_price_ok = 0 < price <= MCMV_MAX_PRICE
     if is_mcmv:
-        breakdown["mcmv"] = 15
+        breakdown["mcmv"] = 10
     elif mcmv_price_ok:
-        breakdown["mcmv"] = 10  # Price compatible even without flag
+        breakdown["mcmv"] = 7
     elif price <= MCMV_MAX_PRICE * 1.2:
-        breakdown["mcmv"] = 5  # Close to MCMV range
+        breakdown["mcmv"] = 3
     else:
         breakdown["mcmv"] = 0
 
@@ -221,17 +237,46 @@ def _score_listing(
         and listing.get("longitude") is not None
     )
     has_neighborhood = bool(listing.get("neighborhood"))
+    has_address = bool(listing.get("address"))
 
     loc_score = 0
     if has_coords:
         loc_score += 5
     if has_neighborhood:
-        loc_score += 5
+        loc_score += 3
+    if has_address:
+        loc_score += 2
     breakdown["location"] = loc_score
 
-    total = sum(breakdown.values())
-    breakdown["total"] = total
-    return total, breakdown
+    # --- Data quality score (10pts): reward complete listings ---
+    dq = 0
+    if price > 0:
+        dq += 2
+    if area > 0:
+        dq += 2
+    if price_m2 > 0:
+        dq += 2
+    if has_coords:
+        dq += 2
+    if listing.get("title"):
+        dq += 1
+    if listing.get("is_mcmv") is not None:
+        dq += 1
+    breakdown["data_quality"] = dq
+
+    # --- Source confidence (10pts) ---
+    confidence = SOURCE_CONFIDENCE.get(source, 0.70)
+    breakdown["source_confidence"] = round(confidence * 10)
+
+    raw_total = sum(breakdown.values())
+
+    # Apply source confidence as multiplier to the raw score
+    final = round(raw_total * confidence, 1)
+    breakdown["raw_total"] = raw_total
+    breakdown["confidence_multiplier"] = confidence
+    breakdown["total"] = final
+
+    return final, breakdown
 
 
 def _build_reason(
@@ -246,14 +291,17 @@ def _build_reason(
     price_m2 = float(listing.get("price_per_m2") or 0)
     neigh = listing.get("neighborhood", "?")
 
-    if score >= 80:
-        parts.append("🔥 Oportunidade excelente!")
-    elif score >= 60:
-        parts.append("⭐ Boa oportunidade")
+    source = listing.get("source", "?")
+    confidence = breakdown.get("confidence_multiplier", 1.0)
+
+    if score >= 70:
+        parts.append("Oportunidade excelente")
+    elif score >= 55:
+        parts.append("Boa oportunidade")
     elif score >= 40:
-        parts.append("👀 Vale acompanhar")
+        parts.append("Vale acompanhar")
     else:
-        parts.append("📋 Registro")
+        parts.append("Registro")
 
     parts.append(f"R$ {price:,.0f}")
     if area > 0:
@@ -262,8 +310,16 @@ def _build_reason(
         parts.append(f"R$ {price_m2:,.0f}/m²")
     parts.append(f"Bairro: {neigh}")
 
-    if breakdown.get("mcmv", 0) >= 10:
-        parts.append("MCMV compatível")
+    if breakdown.get("mcmv", 0) >= 7:
+        parts.append("MCMV compativel")
+
+    # Confidence tag
+    if confidence >= 1.0:
+        parts.append(f"[{source} alta confianca]")
+    elif confidence >= 0.85:
+        parts.append(f"[{source} media confianca]")
+    else:
+        parts.append(f"[{source} baixa confianca - validar dados]")
 
     return " | ".join(parts)
 
