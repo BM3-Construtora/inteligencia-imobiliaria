@@ -2,9 +2,8 @@ name: MaríliaBot Pipeline
 
 on:
   schedule:
-    # Roda todo dia às 6h e 18h (horário de Brasília = 9h e 21h UTC)
+    # Roda todo dia às 6h (horário de Brasília = 9h UTC)
     - cron: '0 9 * * *'
-    - cron: '0 21 * * *'
   workflow_dispatch:  # Permite rodar manualmente
 
 env:
