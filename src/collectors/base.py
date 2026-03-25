@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from src.db import get_client
 
 logger = logging.getLogger(__name__)
+
+UPSERT_BATCH_SIZE = 200
 
 
 class BaseCollector(ABC):
@@ -25,7 +27,7 @@ class BaseCollector(ABC):
             "updated": 0,
             "failed": 0,
         }
-        self._run_id: int | None = None
+        self._run_id: Optional[int] = None
 
     async def run(self) -> dict[str, int]:
         """Execute the full collection pipeline."""
@@ -34,14 +36,8 @@ class BaseCollector(ABC):
             items = await self.fetch_all()
             logger.info(f"[{self.source}] Fetched {len(items)} items")
 
-            for item in items:
-                try:
-                    source_id = self.extract_source_id(item)
-                    self._upsert_raw(source_id, item)
-                    self.stats["processed"] += 1
-                except Exception:
-                    self.stats["failed"] += 1
-                    logger.exception(f"[{self.source}] Failed to process item")
+            # Batch upsert instead of per-item
+            self._batch_upsert_raw(items)
 
             self._finish_run("completed")
         except Exception as e:
@@ -59,25 +55,52 @@ class BaseCollector(ABC):
         """Extract the unique source ID from a raw item."""
         ...
 
-    def _upsert_raw(self, source_id: str, raw_data: dict[str, Any]) -> None:
-        """Insert or update a raw listing."""
-        result = (
-            self.db.table("raw_listings")
-            .upsert(
-                {
+    def _batch_upsert_raw(self, items: list[dict[str, Any]]) -> None:
+        """Batch upsert raw listings for speed."""
+        now = datetime.now(timezone.utc).isoformat()
+        batch: list[dict[str, Any]] = []
+
+        for item in items:
+            try:
+                source_id = self.extract_source_id(item)
+                batch.append({
                     "source": self.source,
                     "source_id": source_id,
-                    "raw_data": raw_data,
-                    "collected_at": datetime.now(timezone.utc).isoformat(),
+                    "raw_data": item,
+                    "collected_at": now,
                     "processed": False,
-                },
-                on_conflict="source,source_id",
+                })
+            except Exception:
+                self.stats["failed"] += 1
+                logger.exception(f"[{self.source}] Failed to extract source_id")
+
+            # Flush batch
+            if len(batch) >= UPSERT_BATCH_SIZE:
+                self._flush_batch(batch)
+                batch = []
+
+        # Flush remaining
+        if batch:
+            self._flush_batch(batch)
+
+    def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
+        """Upsert a batch of raw listings."""
+        try:
+            result = (
+                self.db.table("raw_listings")
+                .upsert(batch, on_conflict="source,source_id")
+                .execute()
             )
-            .execute()
-        )
-        # Check if it was an insert or update
-        if result.data:
-            self.stats["created"] += 1
+            count = len(result.data) if result.data else len(batch)
+            self.stats["processed"] += count
+            self.stats["created"] += count
+            logger.info(
+                f"[{self.source}] Batch upserted {count} items "
+                f"(total: {self.stats['processed']})"
+            )
+        except Exception:
+            self.stats["failed"] += len(batch)
+            logger.exception(f"[{self.source}] Batch upsert failed ({len(batch)} items)")
 
     def _start_run(self) -> None:
         """Log the start of a collector run."""
@@ -89,7 +112,7 @@ class BaseCollector(ABC):
         if result.data:
             self._run_id = result.data[0]["id"]
 
-    def _finish_run(self, status: str, error: str | None = None) -> None:
+    def _finish_run(self, status: str, error: Optional[str] = None) -> None:
         """Log the end of a collector run."""
         if not self._run_id:
             return
