@@ -13,7 +13,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL = "gemini-2.0-flash"
+MODEL = "gemini-2.5-flash"
 
 _client = None
 
@@ -31,13 +31,25 @@ def _generate(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     if not GEMINI_API_KEY:
         return None
     try:
+        from google.genai import types
+
         client = _get_client()
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt,
-            config={"max_output_tokens": max_tokens, "temperature": 0.2},
+            config=types.GenerateContentConfig(
+                max_output_tokens=max_tokens,
+                temperature=0.2,
+            ),
         )
-        return response.text.strip() if response.text else None
+        # Extract text — try .text first, then parts
+        if response.text:
+            return response.text.strip()
+        if response.candidates:
+            parts = response.candidates[0].content.parts
+            text = "".join(p.text for p in parts if hasattr(p, "text") and p.text)
+            return text.strip() if text else None
+        return None
     except Exception:
         logger.debug("[llm] Gemini call failed", exc_info=True)
         return None
@@ -103,7 +115,7 @@ Retorne APENAS um JSON válido com estes campos:
 Se não souber o valor, use null. Se a descrição não tiver info útil, retorne {{}}.
 """
 
-    text = _generate(prompt, max_tokens=500)
+    text = _generate(prompt, max_tokens=2000)
     return _parse_json(text)
 
 
