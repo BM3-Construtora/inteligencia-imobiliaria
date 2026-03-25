@@ -170,30 +170,30 @@ Score numérico: {numeric_score:.0f}/100
 Dê uma nota de 0 a 10 para potencial de investimento e justifique em 1 frase curta.
 Retorne JSON: {{"nota": N, "justificativa": "..."}}"""
 
-    text = _generate(prompt, max_tokens=150)
+    text = _generate(prompt, max_tokens=2000)
     return _parse_json(text)
 
 
 def assess_risk(listing_data: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Assess risks for a land opportunity."""
-    prompt = f"""Avalie os riscos deste terreno em Marília-SP para construção MCMV:
+    prompt = (
+        f"Terreno em {listing_data.get('neighborhood', '?')}, Marília-SP. "
+        f"Zoneamento: {listing_data.get('zoning', '?')}. "
+        f"Infra: {listing_data.get('infra', '?')}. "
+        f"Terreno: {listing_data.get('terrain', '?')}. "
+        f"Classifique riscos de 1-5. Retorne APENAS JSON curto: "
+        f"{{\"zoneamento\":N,\"ambiental\":N,\"infra\":N,\"legal\":N,\"mercado\":N,\"resumo\":\"max 10 palavras\"}}"
+    )
 
-Bairro: {listing_data.get('neighborhood', '?')}
-Zoneamento mencionado: {listing_data.get('zoning', 'não informado')}
-Infraestrutura: {listing_data.get('infra', '?')}
-Coordenadas: {listing_data.get('latitude', '?')}, {listing_data.get('longitude', '?')}
-Características: {listing_data.get('terrain', '?')}
-
-Classifique cada risco de 1 (baixo) a 5 (alto):
-Retorne JSON:
-{{
-  "risco_zoneamento": N,
-  "risco_ambiental": N,
-  "risco_infraestrutura": N,
-  "risco_legal": N,
-  "risco_mercado": N,
-  "resumo": "1 frase com o principal risco identificado"
-}}"""
-
-    text = _generate(prompt, max_tokens=300)
-    return _parse_json(text)
+    text = _generate(prompt, max_tokens=4000)
+    result = _parse_json(text)
+    if not result:
+        return None
+    return {
+        "risco_zoneamento": result.get("zoneamento", result.get("risco_zoneamento", 0)),
+        "risco_ambiental": result.get("ambiental", result.get("risco_ambiental", 0)),
+        "risco_infraestrutura": result.get("infra", result.get("risco_infraestrutura", 0)),
+        "risco_legal": result.get("legal", result.get("risco_legal", 0)),
+        "risco_mercado": result.get("mercado", result.get("risco_mercado", 0)),
+        "resumo": result.get("resumo", ""),
+    }

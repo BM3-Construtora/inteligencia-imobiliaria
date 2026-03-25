@@ -45,7 +45,7 @@ def run_hunter() -> dict[str, int]:
             db.table("listings")
             .select("id, source, source_id, sale_price, total_area, "
                     "price_per_m2, neighborhood, latitude, longitude, "
-                    "is_mcmv, title, address, first_seen_at")
+                    "is_mcmv, title, address, first_seen_at, features")
             .eq("is_active", True)
             .eq("property_type", "land")
             .not_.is_("sale_price", "null")
@@ -263,6 +263,36 @@ def _score_listing(
     if listing.get("is_mcmv") is not None:
         dq += 1
     breakdown["data_quality"] = dq
+
+    # --- Enriched features bonus (up to 10pts) ---
+    features = listing.get("features") or {}
+    if isinstance(features, list):
+        features = {}
+    enriched = features.get("_source") == "claude_haiku"
+
+    enrich_score = 0
+    if enriched:
+        # Infrastructure: +1 per item (max 4)
+        infra = features.get("infraestrutura", [])
+        enrich_score += min(len(infra), 4)
+
+        # Proximities: +1 per item (max 3)
+        prox = features.get("proximidades", [])
+        enrich_score += min(len(prox), 3)
+
+        # Zoning: residential = +2, mixed = +1
+        zoning = (features.get("zoneamento") or "").lower()
+        if "residencial" in zoning:
+            enrich_score += 2
+        elif "misto" in zoning:
+            enrich_score += 1
+
+        # Flat terrain bonus
+        terreno = features.get("caracteristicas_terreno", [])
+        if any("plano" in str(t).lower() for t in terreno):
+            enrich_score += 1
+
+    breakdown["enriched"] = min(enrich_score, 10)
 
     # --- Stale bonus (5pts): terrenos parados há muito tempo = vendedor negocia ---
     from datetime import datetime, timezone

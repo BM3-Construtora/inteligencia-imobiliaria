@@ -13,7 +13,7 @@ env:
   TOCA_ANON_KEY: ${{ secrets.TOCA_ANON_KEY }}
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   MAX_PAGES_PER_SPIDER: '20'
 
 jobs:
@@ -33,22 +33,45 @@ jobs:
       - name: Install dependencies
         run: pip install -e .
 
+      # Phase 1: Collect
       - name: Collect — APIs (União + Toca)
         run: python -m src.main collect uniao toca
 
       - name: Collect — HTML scrapers
         run: python -m src.main collect vivareal chavesnamao imovelweb
-        continue-on-error: true  # Cloudflare pode bloquear
+        continue-on-error: true
 
+      # Phase 2: Normalize + Enrich
       - name: Normalize
         run: python -m src.main normalize
 
+      - name: Enrich (LLM)
+        if: env.GEMINI_API_KEY != ''
+        run: python -m src.main enrich-llm
+        continue-on-error: true
+
+      # Phase 3: Analyze
       - name: Analyze
         run: python -m src.main analyze
 
+      - name: Trends
+        run: python -m src.main trends
+
+      # Phase 4: Score + Risk
       - name: Hunt
         run: python -m src.main hunt
 
+      - name: Score (LLM)
+        if: env.GEMINI_API_KEY != ''
+        run: python -m src.main score-llm
+        continue-on-error: true
+
+      - name: Risk Assessment
+        if: env.GEMINI_API_KEY != ''
+        run: python -m src.main risk
+        continue-on-error: true
+
+      # Phase 5: Deduplicate + Notify
       - name: Deduplicate
         run: python -m src.main dedup
 

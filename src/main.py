@@ -40,10 +40,14 @@ Comandos:
   hunt                   Pontua terrenos e gera oportunidades
   dedup                  Deduplicação cross-portal
   enrich                 Geocoding de listings sem coordenadas
-  enrich-llm             Enriquecimento com Claude Haiku (atributos + bairros)
-  viability              Simulação de viabilidade MCMV
+  enrich-llm             Enriquecimento com Gemini (atributos + bairros)
+  trends                 Detecta tendências de preço por bairro
+  score-llm              Second opinion LLM nas top oportunidades
+  risk                   Avaliação de risco (zoneamento, legal, ambiental)
+  viability              Simulação de viabilidade MCMV (4 cenários)
   notify                 Envia alertas Telegram para oportunidades
-  pipeline               Roda collect → normalize → analyze → hunt → notify
+  report                 Relatório semanal de mercado via Telegram
+  pipeline               Roda pipeline completo
 """.strip()
 
 
@@ -166,6 +170,21 @@ def main() -> None:
         logger.info("=== Starting LLM enricher ===")
         s = run_llm_enricher()
         logger.info(f"=== LLM Enricher done: {s['enriched']} enriched, {s['neighborhoods_normalized']} neighborhoods ===")
+    elif command == "trends":
+        from src.trends import run_trends
+        logger.info("=== Starting trends ===")
+        s = run_trends()
+        logger.info(f"=== Trends done: {s['aquecendo']} aquecendo, {s['esfriando']} esfriando, {s['estavel']} estavel ===")
+    elif command == "score-llm":
+        from src.scorer_llm import run_llm_scorer
+        logger.info("=== Starting LLM scorer ===")
+        s = run_llm_scorer()
+        logger.info(f"=== LLM Scorer done: {s['scored']} scored ===")
+    elif command == "risk":
+        from src.risk_scorer import run_risk_scorer
+        logger.info("=== Starting risk scorer ===")
+        s = run_risk_scorer()
+        logger.info(f"=== Risk done: {s['assessed']} assessed, {s['high_risk']} high risk ===")
     elif command == "viability":
         from src.viability import run_viability
         logger.info("=== Starting viability ===")
