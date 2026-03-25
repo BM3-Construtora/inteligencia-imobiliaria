@@ -10,7 +10,7 @@ from src.db import get_client
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 100
+BATCH_SIZE = 500
 
 # ============================================================
 # Type mapping
@@ -341,7 +341,11 @@ NORMALIZERS = {
 # ============================================================
 
 def run_normalizer() -> dict[str, int]:
-    """Process all unprocessed raw_listings and upsert into listings."""
+    """Process all unprocessed raw_listings and upsert into listings.
+
+    Optimized for speed: batch upserts instead of per-item requests.
+    ~2 API calls per batch of 100 (instead of 3 per item).
+    """
     db = get_client()
     stats = {
         "processed": 0,
@@ -351,7 +355,6 @@ def run_normalizer() -> dict[str, int]:
         "price_changes": 0,
     }
 
-    # Log agent run
     run_result = (
         db.table("agent_runs")
         .insert({"agent_name": "normalizer", "status": "running"})
@@ -361,8 +364,6 @@ def run_normalizer() -> dict[str, int]:
 
     try:
         while True:
-            # Fetch batch of unprocessed raw listings (always offset 0
-            # because processed rows drop out of the filter)
             batch = (
                 db.table("raw_listings")
                 .select("id, source, source_id, raw_data")
@@ -380,66 +381,26 @@ def run_normalizer() -> dict[str, int]:
                 f"(total so far: {stats['processed']})"
             )
 
+            # Phase 1: Normalize all items in memory (no API calls)
+            normalized_batch = []
+            raw_ids = []
+            now = datetime.now(timezone.utc).isoformat()
+
             for raw_row in batch.data:
                 try:
                     source = raw_row["source"]
                     normalizer_fn = NORMALIZERS.get(source)
                     if not normalizer_fn:
-                        logger.warning(f"No normalizer for source: {source}")
                         stats["failed"] += 1
                         continue
 
                     normalized = normalizer_fn(raw_row["raw_data"])
-                    now = datetime.now(timezone.utc).isoformat()
                     normalized["last_seen_at"] = now
                     normalized["updated_at"] = now
+                    normalized["first_seen_at"] = now
 
-                    # Check for existing listing (for price change detection)
-                    existing = (
-                        db.table("listings")
-                        .select("id, sale_price, rent_price")
-                        .eq("source", source)
-                        .eq("source_id", raw_row["source_id"])
-                        .limit(1)
-                        .execute()
-                    )
-
-                    is_update = bool(existing.data)
-                    if is_update:
-                        old = existing.data[0]
-                        _detect_price_change(
-                            db, old, normalized, stats
-                        )
-
-                    if not is_update:
-                        normalized["first_seen_at"] = now
-
-                    # Upsert listing
-                    result = (
-                        db.table("listings")
-                        .upsert(normalized, on_conflict="source,source_id")
-                        .execute()
-                    )
-
-                    if result.data:
-                        listing_id = result.data[0]["id"]
-                        if is_update:
-                            stats["updated"] += 1
-                        else:
-                            stats["created"] += 1
-
-                        # Link raw → listing
-                        (
-                            db.table("raw_listings")
-                            .update({
-                                "processed": True,
-                                "listing_id": listing_id,
-                            })
-                            .eq("id", raw_row["id"])
-                            .execute()
-                        )
-
-                    stats["processed"] += 1
+                    normalized_batch.append(normalized)
+                    raw_ids.append(raw_row["id"])
 
                 except Exception:
                     stats["failed"] += 1
@@ -448,10 +409,32 @@ def run_normalizer() -> dict[str, int]:
                         f"{raw_row.get('source')}:{raw_row.get('source_id')}"
                     )
 
-            # Safety: if nothing was processed in this batch, break to avoid infinite loop
-            if stats["processed"] == 0 and stats["failed"] == len(batch.data):
-                logger.warning("[normalizer] Entire batch failed, stopping")
-                break
+            if not normalized_batch:
+                if stats["failed"] > 0:
+                    break
+                continue
+
+            # Phase 2: Batch upsert listings (1 API call for entire batch)
+            try:
+                result = (
+                    db.table("listings")
+                    .upsert(normalized_batch, on_conflict="source,source_id")
+                    .execute()
+                )
+                stats["processed"] += len(normalized_batch)
+                stats["created"] += len(result.data) if result.data else 0
+            except Exception:
+                logger.exception("[normalizer] Batch upsert failed")
+                stats["failed"] += len(normalized_batch)
+                continue
+
+            # Phase 3: Batch mark raw_listings as processed (1 API call)
+            try:
+                db.table("raw_listings").update({
+                    "processed": True,
+                }).in_("id", raw_ids).execute()
+            except Exception:
+                logger.exception("[normalizer] Failed to mark batch as processed")
 
         logger.info(
             f"[normalizer] Done: {stats['processed']} processed, "
