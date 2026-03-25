@@ -131,7 +131,40 @@ class ChavesNaMaoCollector(BaseCollector):
         # Property type from URL or title
         prop_type = url_data.get("type", "other")
 
-        area = features.get("área útil") or features.get("área total")
+        # Area logic:
+        # - "Área útil" from features = built area (área construída)
+        # - URL area = total area (terreno) — more reliable for total
+        # - For land: total_area is what matters
+        feat_area_raw = features.get("área útil") or features.get("área total")
+        feat_area = None
+        if feat_area_raw and feat_area_raw not in ("undefined", "0"):
+            try:
+                feat_area = float(feat_area_raw)
+                if feat_area <= 0:
+                    feat_area = None
+            except ValueError:
+                feat_area = None
+
+        url_area = url_data.get("area")
+
+        # Use URL area as total_area (more reliable for land/total)
+        # Use feature area as built_area
+        # For land, prefer the larger value (feature "Área útil" is actually total for land)
+        if prop_type == "land":
+            total_area = max(url_area or 0, feat_area or 0) or None
+            built_area = None
+        else:
+            total_area = url_area if url_area and url_area > (feat_area or 0) else feat_area
+            built_area = feat_area if feat_area and url_area and url_area > feat_area else None
+
+        # Also try to extract area from title as last resort
+        if not total_area and title:
+            title_area = re.search(r"([\d.,]+)\s*m[²2]", title)
+            if title_area:
+                try:
+                    total_area = float(title_area.group(1).replace(".", "").replace(",", "."))
+                except ValueError:
+                    pass
 
         return {
             "id": card_id,
@@ -139,7 +172,8 @@ class ChavesNaMaoCollector(BaseCollector):
             "title": title,
             "type": prop_type,
             "price": price or url_data.get("price"),
-            "area": float(area) if area and area != "undefined" else None,
+            "area": total_area,
+            "built_area": built_area,
             "bedrooms": _safe_int(features.get("quartos")),
             "bathrooms": _safe_int(features.get("banheiros")),
             "parking": _safe_int(features.get("garagens")),

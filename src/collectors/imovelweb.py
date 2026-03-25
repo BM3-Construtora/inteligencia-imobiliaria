@@ -119,8 +119,10 @@ class ImovelwebCollector(BaseCollector):
         # Alt text has structured info: "Casa · 60m² · 2 Quartos · 2 Vagas · ..."
         alt = img.get("alt", "") if img else ""
 
-        # Parse from alt text
+        # Parse from alt text — discard implausible areas (<=15m²)
         area_match = re.search(r"(\d+)\s*m²", alt)
+        if area_match and int(area_match.group(1)) <= 15:
+            area_match = None  # Likely parsing artifact
         rooms_match = re.search(r"(\d+)\s*Quarto", alt)
         parking_match = re.search(r"(\d+)\s*Vaga", alt)
 

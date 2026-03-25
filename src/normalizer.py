@@ -80,8 +80,24 @@ def _calc_price_per_m2(
     price: Optional[float], area: Optional[float]
 ) -> Optional[float]:
     if price and area and area > 0:
-        return round(price / area, 2)
+        result = round(price / area, 2)
+        # Sanity check: R$0.01-50000/m² is plausible for Marília
+        # Anything outside this range is likely bad data
+        if result < 0.01 or result > 50000:
+            return None
+        return result
     return None
+
+
+def _validate_area(area: Optional[float]) -> Optional[float]:
+    """Discard implausible area values."""
+    if area is None:
+        return None
+    if area <= 15:
+        return None  # Likely parsing artifact (e.g., "12m²" placeholder)
+    if area > 10_000_000:
+        return None  # > 10km², clearly wrong
+    return area
 
 
 # ============================================================
@@ -93,7 +109,7 @@ def normalize_uniao(raw: dict[str, Any]) -> dict[str, Any]:
     prop_type = UNIAO_TYPE_MAP.get(raw.get("type", ""), "other")
     sale_price = _safe_float(raw.get("salePrice"))
     rent_price = _safe_float(raw.get("rentPrice"))
-    total_area = _safe_float(raw.get("totalArea"))
+    total_area = _validate_area(_safe_float(raw.get("totalArea")))
     built_area = _safe_float(raw.get("builtArea"))
 
     # Business type
@@ -165,7 +181,7 @@ def normalize_toca(raw: dict[str, Any]) -> dict[str, Any]:
 
     sale_price = _safe_float(raw.get("valor"))
     rent_price = _safe_float(raw.get("valor_aluguel"))
-    total_area = _safe_float(raw.get("a_terreno"))
+    total_area = _validate_area(_safe_float(raw.get("a_terreno")))
     built_area = _safe_float(raw.get("a_construida"))
 
     # Business type
@@ -249,7 +265,7 @@ def normalize_html_scraper(source: str, raw: dict[str, Any]) -> dict[str, Any]:
         prop_type = "other"
 
     sale_price = _safe_float(raw.get("price"))
-    total_area = _safe_float(raw.get("area"))
+    total_area = _validate_area(_safe_float(raw.get("area")))
 
     # Images
     images = raw.get("images", [])

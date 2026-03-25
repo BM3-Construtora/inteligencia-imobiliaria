@@ -112,6 +112,18 @@ class VivaRealCollector(BaseCollector):
         schema_type = item.get("@type", "").lower()
         prop_type = _map_schema_type(schema_type) or url_data.get("type", "other")
 
+        # Area: prefer name (JSON-LD), fallback to URL
+        # Discard implausible areas (<=15m² is likely a parsing artifact)
+        area = int(area_match.group(1)) if area_match else url_data.get("area")
+        if area is not None and area <= 15:
+            # Try description for real area
+            desc = item.get("description", "")
+            desc_area = re.search(r"(\d{2,})\s*m[²2]", desc)
+            if desc_area:
+                area = int(desc_area.group(1))
+            else:
+                area = None  # Discard unreliable data
+
         return {
             "id": item_id,
             "url": url,
@@ -119,7 +131,7 @@ class VivaRealCollector(BaseCollector):
             "description": item.get("description", ""),
             "type": prop_type,
             "price": price,
-            "area": int(area_match.group(1)) if area_match else url_data.get("area"),
+            "area": area,
             "bedrooms": int(rooms_match.group(1)) if rooms_match else None,
             "bathrooms": int(bath_match.group(1)) if bath_match else None,
             "parking": int(parking_match.group(1)) if parking_match else None,
