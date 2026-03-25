@@ -49,12 +49,12 @@ def run_hunter() -> dict[str, int]:
             .eq("is_active", True)
             .eq("property_type", "land")
             .not_.is_("sale_price", "null")
-            .gt("sale_price", 0)
+            .gt("sale_price", 5000)  # Filter out placeholder/error prices
             .execute()
         )
 
         listings = result.data
-        logger.info(f"[hunter] Scoring {len(listings)} land listings")
+        logger.info(f"[hunter] Scoring {len(listings)} land listings (filtered price > R$5000)")
 
         scored = []
         for listing in listings:
