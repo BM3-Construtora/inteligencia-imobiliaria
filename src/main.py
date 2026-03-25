@@ -36,7 +36,9 @@ Uso: python -m src.main <comando> [args]
 Comandos:
   collect [source ...]   Roda coletores (todos se nenhum especificado)
   normalize              Normaliza raw_listings → listings
-  pipeline               Roda collect + normalize em sequência
+  analyze                Gera market snapshots e atualiza bairros
+  hunt                   Pontua terrenos e gera oportunidades
+  pipeline               Roda collect + normalize + analyze + hunt
 """.strip()
 
 
@@ -80,10 +82,39 @@ def run_normalize() -> None:
     )
 
 
+def run_analyze() -> None:
+    """Run the analyst."""
+    from src.analyst import run_analyst
+
+    logger.info("=== Starting analyst ===")
+    stats = run_analyst()
+    logger.info(
+        f"=== Analyst done: "
+        f"{stats['snapshots']} snapshots, "
+        f"{stats['neighborhoods']} neighborhoods ==="
+    )
+
+
+def run_hunt() -> None:
+    """Run the hunter."""
+    from src.hunter import run_hunter
+
+    logger.info("=== Starting hunter ===")
+    stats = run_hunter()
+    logger.info(
+        f"=== Hunter done: "
+        f"{stats['scored']} scored, "
+        f"{stats['opportunities']} opportunities, "
+        f"top score: {stats['top_score']:.1f} ==="
+    )
+
+
 async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
-    """Run full pipeline: collect → normalize."""
+    """Run full pipeline: collect → normalize → analyze → hunt."""
     await run_collectors(collector_names)
     run_normalize()
+    run_analyze()
+    run_hunt()
 
 
 def main() -> None:
@@ -101,6 +132,10 @@ def main() -> None:
         asyncio.run(run_collectors(names))
     elif command == "normalize":
         run_normalize()
+    elif command == "analyze":
+        run_analyze()
+    elif command == "hunt":
+        run_hunt()
     elif command == "pipeline":
         names = args[1:] if len(args) > 1 else None
         asyncio.run(run_pipeline(names))
