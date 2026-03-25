@@ -141,19 +141,20 @@ def batch_normalize_neighborhoods(names: list[str]) -> dict[str, str]:
 
 def generate_market_report(data: dict[str, Any]) -> Optional[str]:
     """Generate a weekly market report in Portuguese."""
-    prompt = f"""Você é um analista imobiliário especialista em Marília-SP.
-Com base nos dados abaixo, gere um resumo executivo em 3 parágrafos curtos para um construtor:
+    prompt = (
+        "Voce e um analista imobiliario especialista em Marilia-SP. "
+        "Gere um resumo executivo COMPLETO para um construtor que quer comprar terrenos para MCMV. "
+        "3 secoes obrigatorias:\n\n"
+        "TENDENCIAS: O que mudou nos precos? Quais bairros se destacaram?\n"
+        "OPORTUNIDADES: Quais os 3 melhores terrenos disponiveis?\n"
+        "RECOMENDACAO: Comprar agora ou esperar? Qual bairro focar?\n\n"
+        f"Dados: {json.dumps(data, ensure_ascii=False)[:2500]}\n\n"
+        "REGRAS: Sem markdown. Sem asteriscos. Sem bullet points. "
+        "Texto corrido em portugues informal. Maximo 600 palavras. "
+        "Comece direto pela analise, sem introducao."
+    )
 
-1. **Tendências**: O que mudou nos preços e oferta esta semana? Quais bairros se destacaram?
-2. **Oportunidades**: Quais são os melhores terrenos disponíveis agora?
-3. **Recomendação**: Comprar agora ou esperar? Qual bairro focar?
-
-Dados da semana:
-{json.dumps(data, ensure_ascii=False, indent=2)[:3000]}
-
-Seja direto, prático e em português informal. Sem introduções genéricas."""
-
-    return _generate(prompt, max_tokens=800)
+    return _generate(prompt, max_tokens=8000)
 
 
 def score_opportunity(listing_data: dict[str, Any], numeric_score: float) -> Optional[dict[str, Any]]:
