@@ -1,4 +1,4 @@
-"""LLM helpers — Claude API integration for enrichment tasks."""
+"""LLM helpers — Google Gemini API integration for enrichment tasks."""
 
 from __future__ import annotations
 
@@ -7,34 +7,86 @@ import logging
 import os
 from typing import Any, Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-MODEL_HAIKU = "claude-haiku-4-5-20251001"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+MODEL = "gemini-2.0-flash"
+
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        from google import genai
+        _client = genai.Client(api_key=GEMINI_API_KEY)
+    return _client
+
+
+def _generate(prompt: str, max_tokens: int = 1000) -> Optional[str]:
+    """Call Gemini and return the text response."""
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        client = _get_client()
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config={"max_output_tokens": max_tokens, "temperature": 0.2},
+        )
+        return response.text.strip() if response.text else None
+    except Exception:
+        logger.debug("[llm] Gemini call failed", exc_info=True)
+        return None
+
+
+def _parse_json(text: str) -> Optional[dict[str, Any]]:
+    """Parse JSON from LLM response, handling markdown code blocks."""
+    if not text:
+        return None
+    # Strip markdown code blocks
+    if "```" in text:
+        lines = text.split("\n")
+        clean = []
+        inside = False
+        for line in lines:
+            if line.strip().startswith("```"):
+                inside = not inside
+                continue
+            if inside or not text.startswith("```"):
+                clean.append(line)
+        text = "\n".join(clean) if clean else text
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Try to find JSON within text
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                return json.loads(text[start:end])
+            except json.JSONDecodeError:
+                pass
+        return None
 
 
 def extract_listing_attributes(description: str, title: str = "") -> Optional[dict[str, Any]]:
-    """Use Claude Haiku to extract structured attributes from a listing description.
+    """Extract structured attributes from a listing description.
 
-    Returns dict with: neighborhood_normalized, features_extracted, zoning_mentioned,
-    infrastructure, nearby_amenities, is_condominium, has_water, has_electricity, etc.
+    Returns dict with: neighborhood_normalized, infrastructure, nearby_amenities, etc.
     """
-    if not ANTHROPIC_API_KEY:
-        return None
-
     if not description or len(description.strip()) < 20:
         return None
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-        prompt = f"""Analise este anúncio imobiliário de Marília-SP e extraia atributos estruturados.
+    prompt = f"""Analise este anúncio imobiliário de Marília-SP e extraia atributos estruturados.
 
 Título: {title}
 Descrição: {description[:1500]}
 
-Retorne APENAS um JSON válido (sem markdown) com estes campos:
+Retorne APENAS um JSON válido com estes campos:
 {{
   "bairro_normalizado": "nome padronizado do bairro (ex: 'Jardim Cavallari', não 'Jd. Cavalari')",
   "infraestrutura": ["lista de itens mencionados: asfalto, agua, esgoto, luz, gas, internet"],
@@ -51,98 +103,85 @@ Retorne APENAS um JSON válido (sem markdown) com estes campos:
 Se não souber o valor, use null. Se a descrição não tiver info útil, retorne {{}}.
 """
 
-        response = client.messages.create(
-            model=MODEL_HAIKU,
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        text = response.content[0].text.strip()
-        # Clean potential markdown wrapping
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            if text.endswith("```"):
-                text = text[:-3]
-
-        return json.loads(text)
-
-    except json.JSONDecodeError:
-        logger.debug(f"[llm] Failed to parse JSON from Haiku response")
-        return None
-    except Exception:
-        logger.debug("[llm] Haiku call failed", exc_info=True)
-        return None
-
-
-def normalize_neighborhood(name: str) -> Optional[str]:
-    """Use Claude Haiku to normalize a neighborhood name for Marília-SP.
-
-    Handles: abbreviations (Jd. → Jardim), typos, casing, variants.
-    """
-    if not ANTHROPIC_API_KEY:
-        return None
-
-    if not name or len(name.strip()) < 2:
-        return None
-
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-        response = client.messages.create(
-            model=MODEL_HAIKU,
-            max_tokens=50,
-            messages=[{"role": "user", "content": (
-                f"Normalize este nome de bairro de Marília-SP para a forma padrão oficial. "
-                f"Corrija abreviações (Jd.→Jardim, Pq.→Parque, Res.→Residencial, Vl.→Vila), "
-                f"erros de digitação, e casing. "
-                f"Retorne APENAS o nome normalizado, nada mais.\n\n"
-                f"Bairro: {name}"
-            )}],
-        )
-
-        normalized = response.content[0].text.strip()
-        # Sanity: should be similar length, not a full sentence
-        if len(normalized) > len(name) * 3 or "\n" in normalized:
-            return None
-        return normalized
-
-    except Exception:
-        logger.debug(f"[llm] Failed to normalize neighborhood: {name}", exc_info=True)
-        return None
+    text = _generate(prompt, max_tokens=500)
+    return _parse_json(text)
 
 
 def batch_normalize_neighborhoods(names: list[str]) -> dict[str, str]:
     """Normalize a batch of neighborhood names in one API call."""
-    if not ANTHROPIC_API_KEY or not names:
+    if not names:
         return {}
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    names_list = "\n".join(f"- {n}" for n in names[:50])
 
-        names_list = "\n".join(f"- {n}" for n in names[:50])
+    prompt = (
+        f"Normalize estes nomes de bairros de Marília-SP para a forma padrão oficial. "
+        f"Corrija abreviações (Jd.→Jardim, Pq.→Parque, Res.→Residencial, Vl.→Vila, "
+        f"N.H.→Núcleo Habitacional), erros de digitação, e casing.\n\n"
+        f"Retorne APENAS um JSON: {{\"original\": \"normalizado\", ...}}\n\n"
+        f"Bairros:\n{names_list}"
+    )
 
-        response = client.messages.create(
-            model=MODEL_HAIKU,
-            max_tokens=2000,
-            messages=[{"role": "user", "content": (
-                f"Normalize estes nomes de bairros de Marília-SP para a forma padrão oficial. "
-                f"Corrija abreviações (Jd.→Jardim, Pq.→Parque, Res.→Residencial, Vl.→Vila, "
-                f"N.H.→Núcleo Habitacional), erros de digitação, e casing.\n\n"
-                f"Retorne APENAS um JSON: {{\"original\": \"normalizado\", ...}}\n\n"
-                f"Bairros:\n{names_list}"
-            )}],
-        )
+    text = _generate(prompt, max_tokens=2000)
+    result = _parse_json(text)
+    return result if isinstance(result, dict) else {}
 
-        text = response.content[0].text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            if text.endswith("```"):
-                text = text[:-3]
 
-        return json.loads(text)
+def generate_market_report(data: dict[str, Any]) -> Optional[str]:
+    """Generate a weekly market report in Portuguese."""
+    prompt = f"""Você é um analista imobiliário especialista em Marília-SP.
+Com base nos dados abaixo, gere um resumo executivo em 3 parágrafos curtos para um construtor:
 
-    except Exception:
-        logger.debug("[llm] Batch normalize failed", exc_info=True)
-        return {}
+1. **Tendências**: O que mudou nos preços e oferta esta semana? Quais bairros se destacaram?
+2. **Oportunidades**: Quais são os melhores terrenos disponíveis agora?
+3. **Recomendação**: Comprar agora ou esperar? Qual bairro focar?
+
+Dados da semana:
+{json.dumps(data, ensure_ascii=False, indent=2)[:3000]}
+
+Seja direto, prático e em português informal. Sem introduções genéricas."""
+
+    return _generate(prompt, max_tokens=800)
+
+
+def score_opportunity(listing_data: dict[str, Any], numeric_score: float) -> Optional[dict[str, Any]]:
+    """Get LLM second opinion on a land opportunity."""
+    prompt = f"""Avalie este terreno para construção MCMV em Marília-SP:
+
+Preço: R$ {listing_data.get('sale_price', '?')}
+Área: {listing_data.get('total_area', '?')} m²
+Bairro: {listing_data.get('neighborhood', '?')}
+Infraestrutura: {listing_data.get('infra', '?')}
+Proximidades: {listing_data.get('proximidades', '?')}
+Score numérico: {numeric_score:.0f}/100
+
+Dê uma nota de 0 a 10 para potencial de investimento e justifique em 1 frase curta.
+Retorne JSON: {{"nota": N, "justificativa": "..."}}"""
+
+    text = _generate(prompt, max_tokens=150)
+    return _parse_json(text)
+
+
+def assess_risk(listing_data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Assess risks for a land opportunity."""
+    prompt = f"""Avalie os riscos deste terreno em Marília-SP para construção MCMV:
+
+Bairro: {listing_data.get('neighborhood', '?')}
+Zoneamento mencionado: {listing_data.get('zoning', 'não informado')}
+Infraestrutura: {listing_data.get('infra', '?')}
+Coordenadas: {listing_data.get('latitude', '?')}, {listing_data.get('longitude', '?')}
+Características: {listing_data.get('terrain', '?')}
+
+Classifique cada risco de 1 (baixo) a 5 (alto):
+Retorne JSON:
+{{
+  "risco_zoneamento": N,
+  "risco_ambiental": N,
+  "risco_infraestrutura": N,
+  "risco_legal": N,
+  "risco_mercado": N,
+  "resumo": "1 frase com o principal risco identificado"
+}}"""
+
+    text = _generate(prompt, max_tokens=300)
+    return _parse_json(text)

@@ -176,6 +176,11 @@ def main() -> None:
         logger.info("=== Starting notifier ===")
         s = run_notifier()
         logger.info(f"=== Notifier done: {s['notified']} sent ===")
+    elif command == "report":
+        from src.reporter import run_weekly_report
+        logger.info("=== Starting weekly report ===")
+        s = run_weekly_report()
+        logger.info(f"=== Report done: {s['sent']} sent ===")
     elif command == "pipeline":
         names = args[1:] if len(args) > 1 else None
         asyncio.run(run_pipeline(names))

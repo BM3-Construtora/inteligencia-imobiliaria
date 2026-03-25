@@ -45,7 +45,7 @@ def run_hunter() -> dict[str, int]:
             db.table("listings")
             .select("id, source, source_id, sale_price, total_area, "
                     "price_per_m2, neighborhood, latitude, longitude, "
-                    "is_mcmv, title, address")
+                    "is_mcmv, title, address, first_seen_at")
             .eq("is_active", True)
             .eq("property_type", "land")
             .not_.is_("sale_price", "null")
@@ -263,6 +263,24 @@ def _score_listing(
     if listing.get("is_mcmv") is not None:
         dq += 1
     breakdown["data_quality"] = dq
+
+    # --- Stale bonus (5pts): terrenos parados há muito tempo = vendedor negocia ---
+    from datetime import datetime, timezone
+    stale = 0
+    fs = listing.get("first_seen_at")
+    if fs:
+        try:
+            first = datetime.fromisoformat(str(fs).replace("Z", "+00:00"))
+            days = (datetime.now(timezone.utc) - first).days
+            if days >= 120:
+                stale = 5  # 4+ meses parado
+            elif days >= 90:
+                stale = 4
+            elif days >= 60:
+                stale = 2
+        except (ValueError, TypeError):
+            pass
+    breakdown["stale_bonus"] = stale
 
     # --- Source confidence (10pts) ---
     confidence = SOURCE_CONFIDENCE.get(source, 0.70)

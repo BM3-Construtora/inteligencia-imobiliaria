@@ -11,30 +11,70 @@ from src.db import get_client
 logger = logging.getLogger(__name__)
 
 # Default construction parameters (Marília region, 2024-2025)
-DEFAULTS = {
-    # Construction costs
-    "custo_construcao_m2": 2200.0,      # R$/m² CUB-SP médio para MCMV
-    "taxa_aproveitamento": 0.60,         # 60% do terreno construído
-    "pavimentos": 2,                     # Sobrados / 2 andares
-    "unidade_area": 45.0,               # m² por unidade MCMV típica
-
-    # Revenue
-    "preco_venda_unidade": 190000.0,    # Preço venda unidade MCMV Faixa 2
-    "preco_venda_m2": 4200.0,           # R$/m² venda
-
-    # Costs
-    "custo_infraestrutura_pct": 0.12,   # 12% infra (rua, esgoto, elétrica)
-    "custo_projeto_pct": 0.05,          # 5% projetos + aprovações
-    "custo_comercializacao_pct": 0.06,  # 6% corretagem + marketing
-    "custo_administrativo_pct": 0.04,   # 4% admin + jurídico
-    "impostos_pct": 0.04,              # 4% impostos (RET MCMV)
-
-    # MCMV parameters
-    "mcmv_faixa2_renda_max": 4400.0,
-    "mcmv_faixa2_valor_max": 264000.0,
-    "mcmv_faixa2_subsidio_medio": 30000.0,
-    "mcmv_faixa2_taxa_juros": 0.07,    # 7% a.a.
+SCENARIOS = {
+    "mcmv_faixa2_sobrado": {
+        "nome": "MCMV Faixa 2 — Sobrado",
+        "custo_construcao_m2": 2200.0,
+        "taxa_aproveitamento": 0.60,
+        "pavimentos": 2,
+        "unidade_area": 45.0,
+        "preco_venda_unidade": 190000.0,
+        "preco_venda_m2": 4200.0,
+        "custo_infraestrutura_pct": 0.12,
+        "custo_projeto_pct": 0.05,
+        "custo_comercializacao_pct": 0.06,
+        "custo_administrativo_pct": 0.04,
+        "impostos_pct": 0.04,
+        "valor_max": 264000.0,
+    },
+    "mcmv_faixa1": {
+        "nome": "MCMV Faixa 1 — Popular",
+        "custo_construcao_m2": 1800.0,
+        "taxa_aproveitamento": 0.55,
+        "pavimentos": 2,
+        "unidade_area": 40.0,
+        "preco_venda_unidade": 170000.0,
+        "preco_venda_m2": 3800.0,
+        "custo_infraestrutura_pct": 0.12,
+        "custo_projeto_pct": 0.05,
+        "custo_comercializacao_pct": 0.05,
+        "custo_administrativo_pct": 0.04,
+        "impostos_pct": 0.04,
+        "valor_max": 190000.0,
+    },
+    "casa_padrao": {
+        "nome": "Casa Padrão — Médio",
+        "custo_construcao_m2": 2800.0,
+        "taxa_aproveitamento": 0.50,
+        "pavimentos": 1,
+        "unidade_area": 70.0,
+        "preco_venda_unidade": 350000.0,
+        "preco_venda_m2": 5000.0,
+        "custo_infraestrutura_pct": 0.10,
+        "custo_projeto_pct": 0.06,
+        "custo_comercializacao_pct": 0.06,
+        "custo_administrativo_pct": 0.04,
+        "impostos_pct": 0.06,
+        "valor_max": 500000.0,
+    },
+    "loteamento": {
+        "nome": "Loteamento — Parcelamento",
+        "custo_construcao_m2": 0.0,
+        "taxa_aproveitamento": 0.65,
+        "pavimentos": 1,
+        "unidade_area": 200.0,
+        "preco_venda_unidade": 120000.0,
+        "preco_venda_m2": 600.0,
+        "custo_infraestrutura_pct": 0.25,
+        "custo_projeto_pct": 0.08,
+        "custo_comercializacao_pct": 0.08,
+        "custo_administrativo_pct": 0.05,
+        "impostos_pct": 0.05,
+        "valor_max": 200000.0,
+    },
 }
+
+DEFAULTS = SCENARIOS["mcmv_faixa2_sobrado"]
 
 
 def run_viability(
@@ -46,8 +86,7 @@ def run_viability(
     If listing_ids is None, runs on all land opportunities with score >= 60.
     """
     db = get_client()
-    cfg = {**DEFAULTS, **(params or {})}
-    stats = {"analyzed": 0, "viable": 0, "not_viable": 0}
+    stats = {"analyzed": 0, "viable": 0, "not_viable": 0, "scenarios": 0}
 
     run_result = (
         db.table("agent_runs")
@@ -89,36 +128,62 @@ def run_viability(
             )
 
         listings = result.data
-        logger.info(f"[viability] Analyzing {len(listings)} land listings")
+        logger.info(f"[viability] Analyzing {len(listings)} land listings x {len(SCENARIOS)} scenarios")
+
+        # Clear previous studies for these listings
+        ids_to_clear = [l["id"] for l in listings]
+        if ids_to_clear:
+            db.table("viability_studies").delete().in_("listing_id", ids_to_clear).execute()
 
         for listing in listings:
-            study = _simulate(listing, cfg)
-            if not study:
-                continue
-
             stats["analyzed"] += 1
-            is_viable = study["outputs"]["margem_liquida_pct"] >= 15.0
+            best_scenario = None
+            best_margin = -999
 
-            if is_viable:
-                stats["viable"] += 1
-            else:
-                stats["not_viable"] += 1
+            for scenario_key, scenario_cfg in SCENARIOS.items():
+                cfg = {**scenario_cfg, **(params or {})}
+                study = _simulate(listing, cfg)
+                if not study:
+                    continue
 
-            db.table("viability_studies").insert({
-                "listing_id": listing["id"],
-                "scenario": study["scenario"],
-                "inputs": study["inputs"],
-                "outputs": study["outputs"],
-                "is_viable": is_viable,
-            }).execute()
+                # Sensitivity: optimistic (-10% cost) and pessimistic (+10% cost)
+                cfg_opt = {**cfg, "custo_construcao_m2": cfg["custo_construcao_m2"] * 0.90}
+                cfg_pes = {**cfg, "custo_construcao_m2": cfg["custo_construcao_m2"] * 1.10}
+                study_opt = _simulate(listing, cfg_opt)
+                study_pes = _simulate(listing, cfg_pes)
 
-            logger.info(
-                f"[viability] #{listing['id']} {listing.get('neighborhood', '?')}: "
-                f"{'VIAVEL' if is_viable else 'INVIAVEL'} | "
-                f"Margem: {study['outputs']['margem_liquida_pct']:.1f}% | "
-                f"ROI: {study['outputs']['roi_pct']:.1f}% | "
-                f"{study['outputs']['unidades']} unidades"
-            )
+                if study_opt:
+                    study["outputs"]["margem_otimista_pct"] = study_opt["outputs"]["margem_liquida_pct"]
+                if study_pes:
+                    study["outputs"]["margem_pessimista_pct"] = study_pes["outputs"]["margem_liquida_pct"]
+
+                margin = study["outputs"]["margem_liquida_pct"]
+                is_viable = margin >= 15.0
+
+                if is_viable:
+                    stats["viable"] += 1
+                else:
+                    stats["not_viable"] += 1
+                stats["scenarios"] += 1
+
+                if margin > best_margin:
+                    best_margin = margin
+                    best_scenario = scenario_key
+
+                db.table("viability_studies").insert({
+                    "listing_id": listing["id"],
+                    "scenario": study["scenario"],
+                    "inputs": study["inputs"],
+                    "outputs": study["outputs"],
+                    "is_viable": is_viable,
+                }).execute()
+
+            if best_scenario:
+                logger.info(
+                    f"[viability] #{listing['id']} {listing.get('neighborhood', '?')}: "
+                    f"melhor={SCENARIOS[best_scenario]['nome']} | "
+                    f"margem={best_margin:.1f}%"
+                )
 
         logger.info(
             f"[viability] Done: {stats['analyzed']} analyzed, "

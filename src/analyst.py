@@ -134,10 +134,23 @@ def _calc_snapshot(
 
     # Count new listings (first_seen today)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc)
     new_count = sum(
         1 for r in rows
         if r.get("first_seen_at", "").startswith(today)
     )
+
+    # Calculate average days on market
+    days_list = []
+    for r in rows:
+        fs = r.get("first_seen_at")
+        if fs:
+            try:
+                first = datetime.fromisoformat(fs.replace("Z", "+00:00"))
+                days_list.append((now - first).days)
+            except (ValueError, TypeError):
+                pass
+    avg_dom = round(sum(days_list) / len(days_list)) if days_list else None
 
     return {
         "snapshot_date": today,
@@ -152,7 +165,7 @@ def _calc_snapshot(
         "min_price": round(min(prices), 2),
         "max_price": round(max(prices), 2),
         "avg_area": round(sum(areas) / len(areas), 2) if areas else None,
-        "avg_days_on_market": None,
+        "avg_days_on_market": avg_dom,
     }
 
 
