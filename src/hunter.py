@@ -273,11 +273,11 @@ def _score_listing(
     enrich_score = 0
     if enriched:
         # Infrastructure: +1 per item (max 4)
-        infra = features.get("infraestrutura", [])
+        infra = features.get("infraestrutura") or []
         enrich_score += min(len(infra), 4)
 
         # Proximities: +1 per item (max 3)
-        prox = features.get("proximidades", [])
+        prox = features.get("proximidades") or []
         enrich_score += min(len(prox), 3)
 
         # Zoning: residential = +2, mixed = +1

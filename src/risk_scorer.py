@@ -62,8 +62,8 @@ def run_risk_scorer(limit: int = 30) -> dict[str, int]:
                 "neighborhood": listing.get("neighborhood"),
                 "latitude": listing.get("latitude"),
                 "longitude": listing.get("longitude"),
-                "infra": features.get("infraestrutura", []),
-                "terrain": features.get("caracteristicas_terreno", []),
+                "infra": features.get("infraestrutura") or [],
+                "terrain": features.get("caracteristicas_terreno") or [],
                 "zoning": features.get("zoneamento"),
             }
 
