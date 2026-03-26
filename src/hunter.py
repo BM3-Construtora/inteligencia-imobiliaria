@@ -288,7 +288,7 @@ def _score_listing(
             enrich_score += 1
 
         # Flat terrain bonus
-        terreno = features.get("caracteristicas_terreno", [])
+        terreno = features.get("caracteristicas_terreno") or []
         if any("plano" in str(t).lower() for t in terreno):
             enrich_score += 1
 
