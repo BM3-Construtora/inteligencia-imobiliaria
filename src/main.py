@@ -50,7 +50,10 @@ Comandos:
   viability              Simulação de viabilidade MCMV (4 cenários)
   notify                 Envia alertas Telegram para oportunidades
   report                 Relatório semanal de mercado via Telegram
+  comps                  Análise de comparáveis para oportunidades
+  alerts                 Checa saved searches e envia alertas
   price-model            Treina modelo de predição de preço (terrenos)
+  ibge                   Atualiza dados demográficos do IBGE
   creci                  Coleta dados agregados do CRECI-SP
   pipeline               Roda pipeline completo
 """.strip()
@@ -248,11 +251,26 @@ def main() -> None:
         logger.info("=== Starting weekly report ===")
         s = run_weekly_report()
         logger.info(f"=== Report done: {s['sent']} sent ===")
+    elif command == "comps":
+        from src.comps import run_comps_for_opportunities
+        logger.info("=== Starting comparables ===")
+        s = run_comps_for_opportunities()
+        logger.info(f"=== Comps done: {s['with_comps']} with comps of {s['processed']} ===")
+    elif command == "alerts":
+        from src.alerts import run_alerts
+        logger.info("=== Starting alerts ===")
+        s = run_alerts()
+        logger.info(f"=== Alerts done: {s['matches']} matches, {s['notified']} notified ===")
     elif command == "price-model":
         from src.price_model import run_price_model
         logger.info("=== Starting price model ===")
         s = run_price_model()
         logger.info(f"=== Price model done: {s['predicted']} predicted, {s['undervalued']} undervalued ===")
+    elif command == "ibge":
+        from src.ibge import run_ibge_update
+        logger.info("=== Starting IBGE update ===")
+        s = run_ibge_update()
+        logger.info(f"=== IBGE done: {s['metrics']} metrics ===")
     elif command == "creci":
         from src.collectors.creci import run_creci_collector
         logger.info("=== Starting CRECI-SP collector ===")

@@ -273,6 +273,30 @@ def _update_neighborhood(db: Any, name: str) -> None:
         if days_list:
             avg_dom = round(sum(days_list) / len(days_list))
 
+    # Risk aggregation from opportunities
+    risk_data = (
+        db.table("opportunities")
+        .select("score_breakdown, listing:listings!inner(neighborhood)")
+        .execute()
+    )
+    risk_scores = []
+    risk_dims: dict[str, list[float]] = {}
+    for r in (risk_data.data or []):
+        listing = r.get("listing")
+        if isinstance(listing, list):
+            listing = listing[0] if listing else {}
+        if not listing or listing.get("neighborhood") != name:
+            continue
+        bd = r.get("score_breakdown") or {}
+        for dim in ("risco_zoneamento", "risco_ambiental", "risco_infraestrutura", "risco_legal", "risco_mercado"):
+            val = bd.get(dim)
+            if val is not None:
+                risk_dims.setdefault(dim, []).append(float(val))
+                risk_scores.append(float(val))
+
+    avg_risk = round(sum(risk_scores) / len(risk_scores), 2) if risk_scores else None
+    risk_breakdown = {k: round(sum(v) / len(v), 2) for k, v in risk_dims.items()} if risk_dims else {}
+
     data: dict[str, Any] = {
         "name": name,
         "avg_price_m2_land": _avg_price_m2("land"),
@@ -283,6 +307,8 @@ def _update_neighborhood(db: Any, name: str) -> None:
         "total_houses": total_houses.count or 0,
         "total_listings_by_tier": tier_counts,
         "avg_days_on_market": avg_dom,
+        "avg_risk_score": avg_risk,
+        "risk_breakdown": risk_breakdown,
         "updated_at": now,
     }
     if lat_avg is not None:

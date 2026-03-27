@@ -6,6 +6,7 @@ import type { Neighborhood } from '../types'
 import 'leaflet/dist/leaflet.css'
 
 type MapView = 'all' | 'land' | 'houses'
+type ColorMode = 'price' | 'risk'
 
 const TIER_LABELS: Record<string, string> = {
   terreno_economico: 'Terreno Econom.',
@@ -52,15 +53,19 @@ function fmt(n: number | null): string {
 export function PropertyMap() {
   const { neighborhoods, loading } = useFilteredNeighborhoods()
   const [view, setView] = useState<MapView>('all')
+  const [colorMode, setColorMode] = useState<ColorMode>('price')
 
-  const { filtered, minPrice, maxPrice } = useMemo(() => {
+  const { filtered, minPrice, maxPrice, minRisk, maxRisk } = useMemo(() => {
     const withCoords = neighborhoods.filter(n => n.latitude != null && n.longitude != null)
     const items = withCoords.filter(n => getCount(n, view) > 0)
     const prices = items.map(n => getAvgPrice(n, view)).filter((p): p is number => p != null)
+    const risks = items.map(n => n.avg_risk_score).filter((r): r is number => r != null)
     return {
       filtered: items,
       minPrice: prices.length > 0 ? Math.min(...prices) : 0,
       maxPrice: prices.length > 0 ? Math.max(...prices) : 1,
+      minRisk: risks.length > 0 ? Math.min(...risks) : 1,
+      maxRisk: risks.length > 0 ? Math.max(...risks) : 5,
     }
   }, [neighborhoods, view])
 
@@ -84,20 +89,40 @@ export function PropertyMap() {
           <h3 className="text-white font-semibold">Mapa de Bairros — Marilia/SP</h3>
           <p className="text-xs text-slate-400">{filtered.length} bairros</p>
         </div>
-        <div className="flex gap-1">
-          {([['all', 'Todos'], ['land', 'Terrenos'], ['houses', 'Casas']] as const).map(([key, label]) => (
+        <div className="flex items-center gap-3">
+          <div className="flex gap-1">
+            {([['all', 'Todos'], ['land', 'Terrenos'], ['houses', 'Casas']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setView(key)}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  view === key
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1 border-l border-slate-600 pl-3">
             <button
-              key={key}
-              onClick={() => setView(key)}
-              className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                view === key
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              onClick={() => setColorMode('price')}
+              className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                colorMode === 'price' ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
               }`}
             >
-              {label}
+              Preco
             </button>
-          ))}
+            <button
+              onClick={() => setColorMode('risk')}
+              className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                colorMode === 'risk' ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              }`}
+            >
+              Risco
+            </button>
+          </div>
         </div>
       </div>
 
@@ -116,7 +141,9 @@ export function PropertyMap() {
             const count = getCount(n, view)
             const price = getAvgPrice(n, view)
             const radius = Math.max(6, Math.sqrt(count) * 4)
-            const color = priceToColor(price, minPrice, maxPrice)
+            const color = colorMode === 'risk' && n.avg_risk_score != null
+              ? priceToColor(n.avg_risk_score, minRisk, maxRisk)  // reuse green→red gradient
+              : priceToColor(price, minPrice, maxPrice)
             const tiers = n.total_listings_by_tier || {}
 
             return (
@@ -147,6 +174,12 @@ export function PropertyMap() {
                       <span className="font-medium">{fmt(n.avg_price_m2_house)}</span>
                       <span className="text-gray-500">Tempo medio:</span>
                       <span className="font-medium">{n.avg_days_on_market != null ? `${n.avg_days_on_market} dias` : '-'}</span>
+                      {n.avg_risk_score != null && (<>
+                        <span className="text-gray-500">Risco medio:</span>
+                        <span className={`font-medium ${n.avg_risk_score >= 3 ? 'text-red-500' : n.avg_risk_score >= 2 ? 'text-yellow-500' : 'text-green-500'}`}>
+                          {n.avg_risk_score.toFixed(1)}/5
+                        </span>
+                      </>)}
                     </div>
                     {Object.keys(tiers).length > 0 && (
                       <>
@@ -169,7 +202,12 @@ export function PropertyMap() {
             )
           })}
         </MapContainer>
-        <MapLegend minPrice={minPrice} maxPrice={maxPrice} />
+        <MapLegend
+          minPrice={colorMode === 'risk' ? minRisk : minPrice}
+          maxPrice={colorMode === 'risk' ? maxRisk : maxPrice}
+          label={colorMode === 'risk' ? 'Risco' : 'Preco/m²'}
+          unitSuffix={colorMode === 'risk' ? '/5' : '/m²'}
+        />
       </div>
     </div>
   )
