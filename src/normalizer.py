@@ -466,10 +466,17 @@ def run_normalizer() -> dict[str, int]:
             except Exception:
                 logger.exception("[normalizer] Failed to mark batch as processed")
 
+        # Phase 4: Deactivate stale listings (not seen in 7+ days)
+        stale_count = _deactivate_stale_listings(db)
+        stats["deactivated"] = stale_count
+        if stale_count > 0:
+            logger.info(f"[normalizer] Deactivated {stale_count} stale listings")
+
         logger.info(
             f"[normalizer] Done: {stats['processed']} processed, "
             f"{stats['created']} created, {stats['updated']} updated, "
-            f"{stats['price_changes']} price changes, {stats['failed']} failed"
+            f"{stats['price_changes']} price changes, {stats['failed']} failed, "
+            f"{stats.get('deactivated', 0)} deactivated"
         )
         _finish_run(db, run_id, "completed", stats)
 
@@ -509,6 +516,26 @@ def _detect_price_change(
         f"[normalizer] Price change detected for listing {old['id']}: "
         f"{old_price} → {new_price} ({change_pct:+.1f}%)"
     )
+
+
+def _deactivate_stale_listings(db: Any) -> int:
+    """Deactivate listings not seen in last 7 days (proxy: removed from portal = sold)."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        result = (
+            db.table("listings")
+            .update({"is_active": False, "deactivated_at": now})
+            .eq("is_active", True)
+            .lt("last_seen_at", cutoff)
+            .execute()
+        )
+        return len(result.data) if result.data else 0
+    except Exception:
+        logger.exception("[normalizer] Failed to deactivate stale listings")
+        return 0
 
 
 def _finish_run(

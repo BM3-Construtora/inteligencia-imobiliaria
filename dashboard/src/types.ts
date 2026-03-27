@@ -62,4 +62,8 @@ export interface Neighborhood {
   avg_days_on_market: number | null
   avg_risk_score: number | null
   risk_breakdown: Record<string, number> | null
+  absorption_rate: number | null
+  months_of_inventory: number | null
+  removed_last_30d: number | null
+  new_last_30d: number | null
 }

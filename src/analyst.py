@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from src.db import get_client
@@ -251,6 +251,35 @@ def _update_neighborhood(db: Any, name: str) -> None:
         lat_avg = round(sum(lats) / len(lats), 6)
         lng_avg = round(sum(lngs) / len(lngs), 6)
 
+    # Absorption: listings removed (sold proxy) and new in last 30 days
+    thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+    removed_30d = (
+        db.table("listings")
+        .select("id", count="exact")
+        .eq("is_active", False)
+        .eq("neighborhood", name)
+        .not_.is_("deactivated_at", "null")
+        .gte("deactivated_at", thirty_days_ago)
+        .execute()
+    )
+    new_30d = (
+        db.table("listings")
+        .select("id", count="exact")
+        .eq("neighborhood", name)
+        .gte("first_seen_at", thirty_days_ago)
+        .execute()
+    )
+
+    removed_count = removed_30d.count or 0
+    new_count = new_30d.count or 0
+    total_count = total.count or 0
+
+    # Absorption rate: % of inventory sold per month
+    absorption = round(removed_count / total_count * 100, 2) if total_count > 0 else None
+    # Months of inventory: how many months to sell all current stock
+    months_inv = round(total_count / removed_count, 1) if removed_count > 0 else None
+
     # Deal velocity: avg days on market
     dom_data = (
         db.table("listings")
@@ -307,6 +336,10 @@ def _update_neighborhood(db: Any, name: str) -> None:
         "total_houses": total_houses.count or 0,
         "total_listings_by_tier": tier_counts,
         "avg_days_on_market": avg_dom,
+        "absorption_rate": absorption,
+        "months_of_inventory": months_inv,
+        "removed_last_30d": removed_count,
+        "new_last_30d": new_count,
         "avg_risk_score": avg_risk,
         "risk_breakdown": risk_breakdown,
         "updated_at": now,

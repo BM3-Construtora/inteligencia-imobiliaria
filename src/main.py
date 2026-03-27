@@ -53,6 +53,7 @@ Comandos:
   comps                  Análise de comparáveis para oportunidades
   alerts                 Checa saved searches e envia alertas
   price-model            Treina modelo de predição de preço (terrenos)
+  sinapi                 Busca custos de construção SINAPI/IBGE
   ibge                   Atualiza dados demográficos do IBGE
   creci                  Coleta dados agregados do CRECI-SP
   pipeline               Roda pipeline completo
@@ -266,6 +267,11 @@ def main() -> None:
         logger.info("=== Starting price model ===")
         s = run_price_model()
         logger.info(f"=== Price model done: {s['predicted']} predicted, {s['undervalued']} undervalued ===")
+    elif command == "sinapi":
+        from src.collectors.sinapi import run_sinapi_collector
+        logger.info("=== Starting SINAPI collector ===")
+        s = run_sinapi_collector()
+        logger.info(f"=== SINAPI done: {s['metrics']} metrics ===")
     elif command == "ibge":
         from src.ibge import run_ibge_update
         logger.info("=== Starting IBGE update ===")
