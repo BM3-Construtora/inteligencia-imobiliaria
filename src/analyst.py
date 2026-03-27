@@ -51,11 +51,8 @@ def run_analyst() -> dict[str, int]:
             _upsert_snapshot(db, snapshot)
             stats["snapshots"] += 1
 
-        # 4. Update neighborhood aggregates
-        all_neighborhoods = _get_active_neighborhoods(db, None)
-        for neigh in all_neighborhoods:
-            _update_neighborhood(db, neigh)
-            stats["neighborhoods"] += 1
+        # 4. Update neighborhood aggregates (batch: 1 big query instead of N×12)
+        stats["neighborhoods"] = _update_all_neighborhoods(db)
 
         logger.info(
             f"[analyst] Done: {stats['snapshots']} snapshots, "
@@ -175,6 +172,167 @@ def _upsert_snapshot(db: Any, snapshot: dict[str, Any]) -> None:
         snapshot,
         on_conflict="snapshot_date,property_type,neighborhood",
     ).execute()
+
+
+def _update_all_neighborhoods(db: Any) -> int:
+    """Update all neighborhood aggregates in bulk (few queries instead of N×12)."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    now_dt = datetime.now(timezone.utc)
+    thirty_days_ago = (now_dt - timedelta(days=30)).isoformat()
+
+    # 1. Fetch ALL active listings in one query (paginate)
+    all_listings: list[dict] = []
+    offset = 0
+    page_size = 1000
+    while True:
+        result = (
+            db.table("listings")
+            .select("neighborhood, property_type, market_tier, price_per_m2, "
+                    "latitude, longitude, first_seen_at, is_active")
+            .eq("is_active", True)
+            .not_.is_("neighborhood", "null")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        if not result.data:
+            break
+        all_listings.extend(result.data)
+        if len(result.data) < page_size:
+            break
+        offset += page_size
+
+    # 2. Fetch deactivated listings for absorption
+    deactivated: list[dict] = []
+    result = (
+        db.table("listings")
+        .select("neighborhood, deactivated_at, first_seen_at")
+        .eq("is_active", False)
+        .not_.is_("deactivated_at", "null")
+        .not_.is_("neighborhood", "null")
+        .gte("deactivated_at", thirty_days_ago)
+        .execute()
+    )
+    deactivated = result.data or []
+
+    # 3. Fetch new listings (last 30 days)
+    new_listings: list[dict] = []
+    result = (
+        db.table("listings")
+        .select("neighborhood, first_seen_at")
+        .not_.is_("neighborhood", "null")
+        .gte("first_seen_at", thirty_days_ago)
+        .execute()
+    )
+    new_listings = result.data or []
+
+    logger.info(f"[analyst] Loaded {len(all_listings)} active, {len(deactivated)} deactivated, {len(new_listings)} new")
+
+    # 4. Aggregate in Python (zero additional queries)
+    from collections import defaultdict
+
+    neighs: dict[str, dict] = defaultdict(lambda: {
+        "total": 0, "land": 0, "houses": 0,
+        "land_prices": [], "house_prices": [], "apt_prices": [],
+        "tiers": defaultdict(int),
+        "lats": [], "lngs": [],
+        "days_on_market": [],
+        "removed_30d": 0, "new_30d": 0,
+    })
+
+    for l in all_listings:
+        n = l["neighborhood"]
+        d = neighs[n]
+        d["total"] += 1
+        ptype = l.get("property_type")
+        pm2 = l.get("price_per_m2")
+
+        if ptype == "land":
+            d["land"] += 1
+            if pm2: d["land_prices"].append(float(pm2))
+        elif ptype in ("house", "condo_house"):
+            d["houses"] += 1
+            if pm2: d["house_prices"].append(float(pm2))
+        elif ptype == "apartment":
+            if pm2: d["apt_prices"].append(float(pm2))
+
+        tier = l.get("market_tier")
+        if tier:
+            d["tiers"][tier] += 1
+
+        lat, lng = l.get("latitude"), l.get("longitude")
+        if lat and lng:
+            d["lats"].append(float(lat))
+            d["lngs"].append(float(lng))
+
+        fs = l.get("first_seen_at")
+        if fs:
+            try:
+                first = datetime.fromisoformat(str(fs).replace("Z", "+00:00"))
+                d["days_on_market"].append((now_dt - first).days)
+            except (ValueError, TypeError):
+                pass
+
+    # Count removals and new per neighborhood
+    for l in deactivated:
+        n = l.get("neighborhood")
+        if n:
+            neighs[n]["removed_30d"] += 1
+
+    for l in new_listings:
+        n = l.get("neighborhood")
+        if n:
+            neighs[n]["new_30d"] += 1
+
+    # 5. Build upsert batch
+    count = 0
+    batch: list[dict] = []
+
+    for name, d in neighs.items():
+        avg_land = round(sum(d["land_prices"]) / len(d["land_prices"]), 2) if d["land_prices"] else None
+        avg_house = round(sum(d["house_prices"]) / len(d["house_prices"]), 2) if d["house_prices"] else None
+        avg_apt = round(sum(d["apt_prices"]) / len(d["apt_prices"]), 2) if d["apt_prices"] else None
+        avg_dom = round(sum(d["days_on_market"]) / len(d["days_on_market"])) if d["days_on_market"] else None
+        lat = round(sum(d["lats"]) / len(d["lats"]), 6) if d["lats"] else None
+        lng = round(sum(d["lngs"]) / len(d["lngs"]), 6) if d["lngs"] else None
+
+        total = d["total"]
+        removed = d["removed_30d"]
+        absorption = round(removed / total * 100, 2) if total > 0 and removed > 0 else None
+        months_inv = round(total / removed, 1) if removed > 0 else None
+
+        row: dict[str, Any] = {
+            "name": name,
+            "avg_price_m2_land": avg_land,
+            "avg_price_m2_house": avg_house,
+            "avg_price_m2_apt": avg_apt,
+            "total_listings": total,
+            "total_land": d["land"],
+            "total_houses": d["houses"],
+            "total_listings_by_tier": dict(d["tiers"]),
+            "avg_days_on_market": avg_dom,
+            "absorption_rate": absorption,
+            "months_of_inventory": months_inv,
+            "removed_last_30d": removed,
+            "new_last_30d": d["new_30d"],
+            "updated_at": now_iso,
+        }
+        if lat is not None:
+            row["latitude"] = lat
+            row["longitude"] = lng
+
+        batch.append(row)
+        count += 1
+
+        # Flush in batches of 50
+        if len(batch) >= 50:
+            db.table("neighborhoods").upsert(batch, on_conflict="name").execute()
+            batch = []
+
+    if batch:
+        db.table("neighborhoods").upsert(batch, on_conflict="name").execute()
+
+    logger.info(f"[analyst] Updated {count} neighborhoods in bulk")
+    return count
 
 
 def _update_neighborhood(db: Any, name: str) -> None:
