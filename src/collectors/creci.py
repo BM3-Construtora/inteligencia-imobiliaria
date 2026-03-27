@@ -49,13 +49,15 @@ def run_creci_collector() -> dict[str, int]:
 
         # Fetch the CRECI research page to find report links
         report_data = _fetch_creci_page()
-        if not report_data:
-            logger.warning("[creci] Could not fetch CRECI page, using LLM general knowledge")
-            # Fallback: ask Gemini for latest known CRECI data about Marília
-            metrics = _extract_from_general_knowledge()
-        else:
+        metrics = []
+        if report_data:
             stats["reports_found"] = 1
             metrics = _extract_metrics_from_text(report_data)
+
+        # Fallback: if no metrics extracted, use LLM general knowledge
+        if not metrics:
+            logger.info("[creci] No metrics from page, using LLM general knowledge")
+            metrics = _extract_from_general_knowledge()
 
         if metrics:
             _save_metrics(db, metrics)
@@ -141,25 +143,18 @@ Se nao encontrar dados quantitativos, retorne {{"period": null, "metrics": []}}"
 
 def _extract_from_general_knowledge() -> list[dict[str, Any]]:
     """Ask Gemini for general CRECI market data about Marília."""
-    prompt = """Com base no seu conhecimento sobre o mercado imobiliario de Marilia-SP,
-forneça estimativas de mercado para o periodo mais recente que voce conhece.
+    prompt = (
+        "Retorne APENAS JSON valido, sem texto antes ou depois.\n"
+        "Estime metricas do mercado imobiliario de Marilia-SP (cidade ~240k hab, interior SP).\n"
+        "Inclua: preco_mediano_m2_terreno, preco_mediano_m2_casa, preco_mediano_m2_apartamento, "
+        "volume_vendas_mensal, tempo_medio_venda_dias, variacao_preco_anual_pct, "
+        "taxa_vacancia_pct, lancamentos_novos_mensal.\n"
+        "Formato: "
+        '{"period": "2025-Q4", "metrics": [{"name": "x", "value": 123, "unit": "R$/m2", "context": "breve"}]}\n'
+        "Use valores realistas. JSON compacto em uma linha, sem indentacao. APENAS JSON."
+    )
 
-Retorne JSON com metricas estimadas:
-{{
-  "period": "periodo estimado (ex: 2025-Q4)",
-  "metrics": [
-    {{"name": "preco_mediano_m2_terreno", "value": 450.00, "unit": "R$/m2", "context": "estimativa CRECI"}},
-    {{"name": "preco_mediano_m2_casa", "value": 3200.00, "unit": "R$/m2", "context": "estimativa"}},
-    {{"name": "volume_vendas_mensal", "value": 150, "unit": "transacoes/mes", "context": "estimativa"}},
-    {{"name": "tempo_medio_venda_dias", "value": 90, "unit": "dias", "context": "estimativa"}},
-    {{"name": "variacao_preco_anual_pct", "value": 8.5, "unit": "%", "context": "estimativa de valorizacao"}},
-    ...mais metricas relevantes...
-  ]
-}}
-
-Use valores realistas para uma cidade de ~240k habitantes no interior de SP."""
-
-    text = _generate(prompt, max_tokens=2000)
+    text = _generate(prompt, max_tokens=4000)
     result = _parse_json(text)
 
     if not result or not result.get("metrics"):
