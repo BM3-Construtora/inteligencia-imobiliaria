@@ -56,13 +56,19 @@ class BaseCollector(ABC):
         ...
 
     def _batch_upsert_raw(self, items: list[dict[str, Any]]) -> None:
-        """Batch upsert raw listings for speed."""
+        """Batch upsert raw listings for speed. Deduplicates within batch."""
         now = datetime.now(timezone.utc).isoformat()
         batch: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
 
         for item in items:
             try:
                 source_id = self.extract_source_id(item)
+                # Skip duplicates within the same batch
+                if source_id in seen_ids:
+                    continue
+                seen_ids.add(source_id)
+
                 batch.append({
                     "source": self.source,
                     "source_id": source_id,
@@ -78,6 +84,7 @@ class BaseCollector(ABC):
             if len(batch) >= UPSERT_BATCH_SIZE:
                 self._flush_batch(batch)
                 batch = []
+                seen_ids.clear()
 
         # Flush remaining
         if batch:

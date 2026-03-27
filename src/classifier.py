@@ -116,24 +116,27 @@ def run_classifier() -> dict[str, int]:
 
         logger.info(f"[classifier] Processing {len(listings)} active listings")
 
-        # Classify in batches
-        batch: list[dict] = []
-        BATCH_SIZE = 200
+        # Classify and group by tier for batch updates
+        by_tier: dict[str, list[int]] = {}
 
         for listing in listings:
             tier = classify_listing(listing, mcmv_max)
             if tier:
-                batch.append({"id": listing["id"], "market_tier": tier})
+                by_tier.setdefault(tier, []).append(listing["id"])
                 stats["classified"] += 1
             else:
                 stats["skipped"] += 1
 
-            if len(batch) >= BATCH_SIZE:
-                _flush_batch(db, batch)
-                batch.clear()
-
-        if batch:
-            _flush_batch(db, batch)
+        # Batch update: 1 query per tier (instead of 1 per listing)
+        for tier, ids in by_tier.items():
+            for i in range(0, len(ids), 500):
+                batch_ids = ids[i:i + 500]
+                try:
+                    db.table("listings").update(
+                        {"market_tier": tier}
+                    ).in_("id", batch_ids).execute()
+                except Exception:
+                    logger.exception(f"[classifier] Failed batch update for tier {tier}")
 
         logger.info(
             f"[classifier] Done: {stats['classified']} classified, "
@@ -147,17 +150,6 @@ def run_classifier() -> dict[str, int]:
         raise
 
     return stats
-
-
-def _flush_batch(db: Any, batch: list[dict]) -> None:
-    """Update market_tier for a batch of listings."""
-    for item in batch:
-        try:
-            db.table("listings").update(
-                {"market_tier": item["market_tier"]}
-            ).eq("id", item["id"]).execute()
-        except Exception:
-            pass
 
 
 def _finish_run(
