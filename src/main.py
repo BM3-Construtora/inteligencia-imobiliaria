@@ -53,6 +53,8 @@ Comandos:
   comps                  Análise de comparáveis para oportunidades
   alerts                 Checa saved searches e envia alertas
   price-model            Treina modelo de predição de preço (terrenos)
+  sales                  Detecta vendas estimadas (listings removidos)
+  heat                   Calcula indice de calor do mercado por bairro
   sinapi                 Busca custos de construção SINAPI/IBGE
   ibge                   Atualiza dados demográficos do IBGE
   creci                  Coleta dados agregados do CRECI-SP
@@ -267,6 +269,16 @@ def main() -> None:
         logger.info("=== Starting price model ===")
         s = run_price_model()
         logger.info(f"=== Price model done: {s['predicted']} predicted, {s['undervalued']} undervalued ===")
+    elif command == "sales":
+        from src.sales_tracker import run_sales_tracker
+        logger.info("=== Starting sales tracker ===")
+        s = run_sales_tracker()
+        logger.info(f"=== Sales done: {s['recorded']} recorded of {s['detected']} detected ===")
+    elif command == "heat":
+        from src.market_heat import run_market_heat
+        logger.info("=== Starting market heat ===")
+        s = run_market_heat()
+        logger.info(f"=== Heat done: {s['neighborhoods']} scored, {s['hot']} hot, {s['cold']} cold ===")
     elif command == "sinapi":
         from src.collectors.sinapi import run_sinapi_collector
         logger.info("=== Starting SINAPI collector ===")

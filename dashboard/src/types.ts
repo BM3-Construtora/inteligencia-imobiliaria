@@ -66,4 +66,5 @@ export interface Neighborhood {
   months_of_inventory: number | null
   removed_last_30d: number | null
   new_last_30d: number | null
+  market_heat_score: number | null
 }

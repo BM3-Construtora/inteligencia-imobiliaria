@@ -6,7 +6,7 @@ import type { Neighborhood } from '../types'
 import 'leaflet/dist/leaflet.css'
 
 type MapView = 'all' | 'land' | 'houses'
-type ColorMode = 'price' | 'risk'
+type ColorMode = 'price' | 'risk' | 'heat'
 
 const TIER_LABELS: Record<string, string> = {
   terreno_economico: 'Terreno Econom.',
@@ -122,6 +122,14 @@ export function PropertyMap() {
             >
               Risco
             </button>
+            <button
+              onClick={() => setColorMode('heat')}
+              className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                colorMode === 'heat' ? 'bg-orange-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              }`}
+            >
+              Calor
+            </button>
           </div>
         </div>
       </div>
@@ -142,7 +150,9 @@ export function PropertyMap() {
             const price = getAvgPrice(n, view)
             const radius = Math.max(6, Math.sqrt(count) * 4)
             const color = colorMode === 'risk' && n.avg_risk_score != null
-              ? priceToColor(n.avg_risk_score, minRisk, maxRisk)  // reuse green→red gradient
+              ? priceToColor(n.avg_risk_score, minRisk, maxRisk)
+              : colorMode === 'heat' && n.market_heat_score != null
+              ? priceToColor(100 - n.market_heat_score, 0, 100)  // inverted: hot=green, cold=red
               : priceToColor(price, minPrice, maxPrice)
             const tiers = n.total_listings_by_tier || {}
 
@@ -203,10 +213,10 @@ export function PropertyMap() {
           })}
         </MapContainer>
         <MapLegend
-          minPrice={colorMode === 'risk' ? minRisk : minPrice}
-          maxPrice={colorMode === 'risk' ? maxRisk : maxPrice}
-          label={colorMode === 'risk' ? 'Risco' : 'Preco/m²'}
-          unitSuffix={colorMode === 'risk' ? '/5' : '/m²'}
+          minPrice={colorMode === 'risk' ? minRisk : colorMode === 'heat' ? 0 : minPrice}
+          maxPrice={colorMode === 'risk' ? maxRisk : colorMode === 'heat' ? 100 : maxPrice}
+          label={colorMode === 'risk' ? 'Risco' : colorMode === 'heat' ? 'Calor' : 'Preco/m²'}
+          unitSuffix={colorMode === 'risk' ? '/5' : colorMode === 'heat' ? '/100' : '/m²'}
         />
       </div>
     </div>

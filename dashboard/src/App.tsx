@@ -7,6 +7,7 @@ import { FilterBar } from './components/FilterBar'
 import { MarketBenchmarks } from './components/MarketBenchmarks'
 import { PriceTrend } from './components/PriceTrend'
 import { DecisionPanel } from './components/DecisionPanel'
+import { ViabilityCalculator } from './components/ViabilityCalculator'
 import { FilterProvider, useFilters } from './contexts/FilterContext'
 import { useFilteredStats } from './hooks/useFilteredData'
 
@@ -86,6 +87,8 @@ function Dashboard() {
         )}
 
         <DecisionPanel />
+
+        <ViabilityCalculator />
 
         <ClassificationSummary tiers={stats.tiers} loading={loading} />
 
