@@ -57,6 +57,7 @@ Comandos:
   heat                   Calcula indice de calor do mercado por bairro
   sinapi                 Busca custos de construção SINAPI/IBGE
   ibge                   Atualiza dados demográficos do IBGE
+  bot                    Inicia o bot conversacional do Telegram
   creci                  Coleta dados agregados do CRECI-SP
   pipeline               Roda pipeline completo
 """.strip()
@@ -392,6 +393,9 @@ def main() -> None:
         logger.info("=== Starting IBGE update ===")
         s = run_ibge_update()
         logger.info(f"=== IBGE done: {s['metrics']} metrics ===")
+    elif command == "bot":
+        from src.telegram_bot import run_bot
+        run_bot()
     elif command == "creci":
         from src.collectors.creci import run_creci_collector
         logger.info("=== Starting CRECI-SP collector ===")

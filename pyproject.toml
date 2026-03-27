@@ -13,6 +13,7 @@ dependencies = [
     "cloudscraper>=1.2",
     "rapidfuzz>=3.0",
     "scikit-learn>=1.4",
+    "python-telegram-bot>=22.5",
 ]
 
 [project.optional-dependencies]
