@@ -62,12 +62,12 @@ Comandos:
 """.strip()
 
 
-async def _run_single_collector(name: str, cls: type) -> None:
-    """Run a single collector with error handling."""
+def _run_collector_sync(name: str, cls: type) -> None:
+    """Run a single collector synchronously (for use in threads)."""
     logger.info(f"=== Starting collector: {name} ===")
     collector = cls()
     try:
-        stats = await collector.run()
+        stats = asyncio.run(collector.run())
         logger.info(
             f"=== {name} done: "
             f"{stats['processed']} processed, "
@@ -79,20 +79,37 @@ async def _run_single_collector(name: str, cls: type) -> None:
 
 
 async def run_collectors(names: Optional[List[str]] = None) -> None:
-    """Run specified collectors in parallel (or all if none specified)."""
+    """Run collectors in parallel using threads (scrapers are sync/blocking)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     targets = names or list(COLLECTORS.keys())
 
-    # Separate API collectors (fast, parallel) from HTML scrapers (slower, parallel too)
-    tasks = []
-    for name in targets:
-        cls = COLLECTORS.get(name)
-        if not cls:
-            logger.error(f"Unknown collector: {name}")
-            continue
-        tasks.append(_run_single_collector(name, cls))
+    valid = [(n, COLLECTORS[n]) for n in targets if n in COLLECTORS]
+    if not valid:
+        return
 
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+    # API collectors (uniao, toca) are fast → run first sequentially
+    # HTML scrapers use cloudscraper (blocking) → run in parallel threads
+    apis = [(n, c) for n, c in valid if n in ("uniao", "toca")]
+    scrapers = [(n, c) for n, c in valid if n not in ("uniao", "toca")]
+
+    # Run APIs sequentially (fast, <30s total)
+    for name, cls in apis:
+        _run_collector_sync(name, cls)
+
+    # Run scrapers in parallel threads (each takes 30-60s with delays)
+    if scrapers:
+        logger.info(f"=== Running {len(scrapers)} scrapers in parallel ===")
+        with ThreadPoolExecutor(max_workers=len(scrapers)) as executor:
+            futures = {
+                executor.submit(_run_collector_sync, name, cls): name
+                for name, cls in scrapers
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                except Exception:
+                    logger.exception(f"=== {name} thread FAILED ===")
 
 
 def run_normalize() -> None:

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import logging
-from typing import Optional
 
 import cloudscraper
 
@@ -16,16 +16,15 @@ DEFAULT_HEADERS = {
 
 MAX_RETRIES = 3
 
-# Reuse a single scraper instance across requests
-_scraper: Optional[cloudscraper.CloudScraper] = None
+# Thread-local scraper instances (safe for parallel scrapers)
+_local = threading.local()
 
 
 def get_scraper() -> cloudscraper.CloudScraper:
-    global _scraper
-    if _scraper is None:
-        _scraper = cloudscraper.create_scraper()
-        _scraper.headers.update(DEFAULT_HEADERS)
-    return _scraper
+    if not hasattr(_local, "scraper"):
+        _local.scraper = cloudscraper.create_scraper()
+        _local.scraper.headers.update(DEFAULT_HEADERS)
+    return _local.scraper
 
 
 def fetch_page(url: str, delay: float = 1.0) -> str:
