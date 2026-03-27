@@ -17,6 +17,7 @@ const SOURCE_LABELS: Record<string, string> = {
   vivareal: 'VivaReal',
   chavesnamao: 'Chaves na Mao',
   imovelweb: 'Imovelweb',
+  zapimoveis: 'ZAP',
 }
 
 function Dashboard() {

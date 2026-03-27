@@ -1,26 +1,36 @@
-"""Deduplicator — finds duplicate listings across portals."""
+"""Deduplicator — finds duplicate listings across portals with continuous scoring."""
 
 from __future__ import annotations
 
 import logging
-import re
+import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from src.address import normalize_address, address_similarity, normalize_neighborhood
 from src.db import get_client
 
 logger = logging.getLogger(__name__)
 
 # Thresholds
-PRICE_TOLERANCE = 0.10  # 10% price difference
-AREA_TOLERANCE = 0.15   # 15% area difference
-MIN_MATCH_SCORE = 0.60  # Minimum score to record a match
+MIN_MATCH_SCORE = 0.55  # Record match
+HIGH_CONFIDENCE = 0.80  # Auto-merge candidate
+
+# Source priority for canonical selection (higher = preferred)
+SOURCE_PRIORITY = {
+    "uniao": 5,
+    "toca": 4,
+    "vivareal": 3,
+    "zapimoveis": 3,
+    "imovelweb": 2,
+    "chavesnamao": 1,
+}
 
 
 def run_deduplicator() -> dict[str, int]:
     """Find and record duplicate listings across different sources."""
     db = get_client()
-    stats = {"compared": 0, "matches": 0, "high_confidence": 0}
+    stats = {"compared": 0, "matches": 0, "high_confidence": 0, "canonical_set": 0}
 
     run_result = (
         db.table("agent_runs")
@@ -30,16 +40,18 @@ def run_deduplicator() -> dict[str, int]:
     run_id = run_result.data[0]["id"] if run_result.data else None
 
     try:
-        # Fetch all active listings with useful fields (paginate to bypass 1000 limit)
+        # Fetch all active listings with useful fields (paginate)
         listings: list[dict] = []
         page_size = 1000
         offset = 0
         while True:
             result = (
                 db.table("listings")
-                .select("id, source, neighborhood, address, street, sale_price, "
-                        "total_area, latitude, longitude, property_type, title")
+                .select("id, source, neighborhood, address, street, number, "
+                        "sale_price, total_area, latitude, longitude, "
+                        "property_type, bedrooms, bathrooms, title, zip_code")
                 .eq("is_active", True)
+                .is_("canonical_listing_id", "null")
                 .range(offset, offset + page_size - 1)
                 .execute()
             )
@@ -51,10 +63,10 @@ def run_deduplicator() -> dict[str, int]:
             offset += page_size
         logger.info(f"[dedup] Loaded {len(listings)} active listings")
 
-        # Group by neighborhood for efficiency
+        # Group by normalized neighborhood
         by_neighborhood: dict[str, list[dict]] = {}
         for l in listings:
-            n = _normalize_neighborhood(l.get("neighborhood") or "")
+            n = normalize_neighborhood(l.get("neighborhood") or "")
             if n:
                 by_neighborhood.setdefault(n, []).append(l)
 
@@ -62,11 +74,11 @@ def run_deduplicator() -> dict[str, int]:
         db.table("listing_matches").delete().neq("id", 0).execute()
 
         # Compare within each neighborhood
+        match_pairs: list[dict] = []
         for neigh, group in by_neighborhood.items():
             if len(group) < 2:
                 continue
 
-            # Only compare across different sources
             for i, a in enumerate(group):
                 for b in group[i + 1:]:
                     if a["source"] == b["source"]:
@@ -78,25 +90,38 @@ def run_deduplicator() -> dict[str, int]:
                     score, method = _compare(a, b)
 
                     if score >= MIN_MATCH_SCORE:
-                        # Ensure a_id < b_id for the CHECK constraint
                         a_id, b_id = sorted([a["id"], b["id"]])
-                        try:
-                            db.table("listing_matches").insert({
-                                "listing_a_id": a_id,
-                                "listing_b_id": b_id,
-                                "match_score": round(score, 2),
-                                "match_method": method,
-                            }).execute()
-                            stats["matches"] += 1
-                            if score >= 0.85:
-                                stats["high_confidence"] += 1
-                        except Exception:
-                            pass  # Skip duplicate constraint violations
+                        match_pairs.append({
+                            "listing_a_id": a_id,
+                            "listing_b_id": b_id,
+                            "match_score": round(score, 2),
+                            "match_method": method,
+                        })
+                        stats["matches"] += 1
+                        if score >= HIGH_CONFIDENCE:
+                            stats["high_confidence"] += 1
+
+        # Batch insert matches
+        for i in range(0, len(match_pairs), 100):
+            batch = match_pairs[i:i + 100]
+            try:
+                db.table("listing_matches").insert(batch).execute()
+            except Exception:
+                # Insert one by one to skip constraint violations
+                for m in batch:
+                    try:
+                        db.table("listing_matches").insert(m).execute()
+                    except Exception:
+                        pass
+
+        # Set canonical listings for high-confidence matches
+        stats["canonical_set"] = _set_canonical_listings(db, match_pairs)
 
         logger.info(
             f"[dedup] Done: {stats['compared']} compared, "
             f"{stats['matches']} matches, "
-            f"{stats['high_confidence']} high confidence"
+            f"{stats['high_confidence']} high confidence, "
+            f"{stats['canonical_set']} canonical set"
         )
         _finish_run(db, run_id, "completed", stats)
 
@@ -109,110 +134,125 @@ def run_deduplicator() -> dict[str, int]:
 
 
 def _compare(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
-    """Compare two listings and return (score, method_description)."""
+    """Compare two listings with continuous scoring. Returns (score, method)."""
     signals: list[tuple[float, str]] = []
 
-    # 1. Price similarity (weight: 0.30)
+    # 1. Geographic proximity (weight: 0.25)
+    lat_a, lng_a = a.get("latitude"), a.get("longitude")
+    lat_b, lng_b = b.get("latitude"), b.get("longitude")
+    if lat_a and lng_a and lat_b and lng_b:
+        dist = _haversine(float(lat_a), float(lng_a), float(lat_b), float(lng_b))
+        if dist <= 200:
+            # Linear decay: 1.0 at 0m → 0.0 at 200m
+            geo_score = max(0, 1.0 - dist / 200) * 0.25
+            signals.append((geo_score, f"geo_{int(dist)}m"))
+
+    # 2. Address similarity (weight: 0.25)
+    addr_a = a.get("address") or a.get("street") or ""
+    addr_b = b.get("address") or b.get("street") or ""
+    if addr_a and addr_b:
+        sim = address_similarity(addr_a, addr_b)
+        if sim >= 0.3:
+            addr_score = sim * 0.25
+            signals.append((addr_score, f"addr_{sim:.0%}"))
+
+    # 2b. ZIP code bonus
+    zip_a = a.get("zip_code")
+    zip_b = b.get("zip_code")
+    if zip_a and zip_b and zip_a == zip_b:
+        signals.append((0.10, "zip_match"))
+
+    # 3. Price similarity (weight: 0.25)
     price_a = float(a.get("sale_price") or 0)
     price_b = float(b.get("sale_price") or 0)
     if price_a > 0 and price_b > 0:
         diff = abs(price_a - price_b) / max(price_a, price_b)
-        if diff <= PRICE_TOLERANCE:
-            signals.append((0.30, "price_match"))
-        elif diff <= PRICE_TOLERANCE * 2:
-            signals.append((0.15, "price_close"))
+        if diff <= 0.20:
+            # Linear decay: 1.0 at 0% → 0.0 at 20%
+            price_score = (1.0 - diff / 0.20) * 0.25
+            signals.append((price_score, f"price_{diff:.0%}"))
 
-    # 2. Area similarity (weight: 0.25)
+    # 4. Area similarity (weight: 0.15)
     area_a = float(a.get("total_area") or 0)
     area_b = float(b.get("total_area") or 0)
     if area_a > 0 and area_b > 0:
         diff = abs(area_a - area_b) / max(area_a, area_b)
-        if diff <= 0.02:
-            signals.append((0.25, "area_exact"))
-        elif diff <= AREA_TOLERANCE:
-            signals.append((0.15, "area_close"))
+        if diff <= 0.15:
+            area_score = (1.0 - diff / 0.15) * 0.15
+            signals.append((area_score, f"area_{diff:.0%}"))
 
-    # 3. Address similarity (weight: 0.25)
-    addr_a = _normalize_address(a.get("address") or a.get("street") or "")
-    addr_b = _normalize_address(b.get("address") or b.get("street") or "")
-    if addr_a and addr_b:
-        sim = _string_similarity(addr_a, addr_b)
-        if sim >= 0.80:
-            signals.append((0.25, "address_match"))
-        elif sim >= 0.60:
-            signals.append((0.15, "address_similar"))
-
-    # 4. Geographic proximity (weight: 0.20)
-    lat_a = a.get("latitude")
-    lng_a = a.get("longitude")
-    lat_b = b.get("latitude")
-    lng_b = b.get("longitude")
-    if lat_a and lng_a and lat_b and lng_b:
-        dist = _haversine(float(lat_a), float(lng_a), float(lat_b), float(lng_b))
-        if dist <= 50:  # 50 meters
-            signals.append((0.20, "geo_exact"))
-        elif dist <= 200:  # 200 meters
-            signals.append((0.10, "geo_close"))
+    # 5. Bedrooms/bathrooms match (weight: 0.10)
+    bed_a = a.get("bedrooms")
+    bed_b = b.get("bedrooms")
+    bath_a = a.get("bathrooms")
+    bath_b = b.get("bathrooms")
+    if bed_a is not None and bed_b is not None:
+        if bed_a == bed_b:
+            signals.append((0.05, "bed_match"))
+        if bath_a is not None and bath_b is not None and bath_a == bath_b:
+            signals.append((0.05, "bath_match"))
 
     score = sum(s for s, _ in signals)
     methods = "+".join(m for _, m in signals)
     return score, methods or "no_match"
 
 
-def _normalize_neighborhood(name: str) -> str:
-    """Normalize neighborhood name for comparison."""
-    name = name.lower().strip()
-    name = re.sub(r"[^\w\s]", "", name)
-    name = re.sub(r"\s+", " ", name)
-    # Remove common prefixes
-    for prefix in ["jardim ", "jd ", "parque ", "pq ", "residencial ", "res ",
-                    "nucleo habitacional ", "vila "]:
-        if name.startswith(prefix):
-            name = name[len(prefix):]
-    return name
+def _set_canonical_listings(db: Any, match_pairs: list[dict]) -> int:
+    """For high-confidence matches, set canonical_listing_id on the inferior listing."""
+    high_conf = [m for m in match_pairs if m["match_score"] >= HIGH_CONFIDENCE]
+    if not high_conf:
+        return 0
 
+    # Collect all listing IDs involved
+    ids_needed = set()
+    for m in high_conf:
+        ids_needed.add(m["listing_a_id"])
+        ids_needed.add(m["listing_b_id"])
 
-def _normalize_address(addr: str) -> str:
-    """Normalize address for comparison."""
-    addr = addr.lower().strip()
-    addr = re.sub(r"[^\w\s]", "", addr)
-    addr = re.sub(r"\s+", " ", addr)
-    # Remove common prefixes
-    for prefix in ["rua ", "r ", "avenida ", "av ", "alameda ", "al ",
-                    "travessa ", "tv "]:
-        if addr.startswith(prefix):
-            addr = addr[len(prefix):]
-    return addr
+    # Fetch source info
+    source_map: dict[int, str] = {}
+    for lid in ids_needed:
+        try:
+            result = db.table("listings").select("id, source").eq("id", lid).limit(1).execute()
+            if result.data:
+                source_map[result.data[0]["id"]] = result.data[0]["source"]
+        except Exception:
+            pass
 
+    count = 0
+    for m in high_conf:
+        a_id = m["listing_a_id"]
+        b_id = m["listing_b_id"]
+        src_a = source_map.get(a_id, "")
+        src_b = source_map.get(b_id, "")
+        prio_a = SOURCE_PRIORITY.get(src_a, 0)
+        prio_b = SOURCE_PRIORITY.get(src_b, 0)
 
-def _string_similarity(a: str, b: str) -> float:
-    """Simple bigram similarity (Dice coefficient)."""
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
+        # Higher priority = canonical. On tie, lower ID wins.
+        if prio_a >= prio_b:
+            canonical_id, duplicate_id = a_id, b_id
+        else:
+            canonical_id, duplicate_id = b_id, a_id
 
-    def bigrams(s: str) -> set[str]:
-        return {s[i:i+2] for i in range(len(s) - 1)}
+        try:
+            db.table("listings").update(
+                {"canonical_listing_id": canonical_id}
+            ).eq("id", duplicate_id).is_("canonical_listing_id", "null").execute()
+            count += 1
+        except Exception:
+            pass
 
-    bg_a = bigrams(a)
-    bg_b = bigrams(b)
-    if not bg_a or not bg_b:
-        return 0.0
-
-    intersection = len(bg_a & bg_b)
-    return (2 * intersection) / (len(bg_a) + len(bg_b))
+    return count
 
 
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate distance in meters between two points."""
-    import math
-    R = 6371000  # Earth radius in meters
+    R = 6371000
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam/2)**2
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
@@ -225,7 +265,7 @@ def _finish_run(
 ) -> None:
     if not run_id:
         return
-    update = {
+    update: dict[str, Any] = {
         "status": status,
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "items_processed": stats["compared"],

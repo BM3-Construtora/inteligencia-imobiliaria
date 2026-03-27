@@ -12,6 +12,7 @@ from src.collectors.toca import TocaCollector
 from src.collectors.vivareal import VivaRealCollector
 from src.collectors.chavesnamao import ChavesNaMaoCollector
 from src.collectors.imovelweb import ImovelwebCollector
+from src.collectors.zapimoveis import ZapImoveisCollector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +27,7 @@ COLLECTORS = {
     "vivareal": VivaRealCollector,
     "chavesnamao": ChavesNaMaoCollector,
     "imovelweb": ImovelwebCollector,
+    "zapimoveis": ZapImoveisCollector,
 }
 
 USAGE = """

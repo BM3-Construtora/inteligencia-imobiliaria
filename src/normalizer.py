@@ -323,6 +323,10 @@ def normalize_imovelweb(raw: dict[str, Any]) -> dict[str, Any]:
     return normalize_html_scraper("imovelweb", raw)
 
 
+def normalize_zapimoveis(raw: dict[str, Any]) -> dict[str, Any]:
+    return normalize_html_scraper("zapimoveis", raw)
+
+
 # ============================================================
 # Dispatcher
 # ============================================================
@@ -333,6 +337,7 @@ NORMALIZERS = {
     "vivareal": normalize_vivareal,
     "chavesnamao": normalize_chavesnamao,
     "imovelweb": normalize_imovelweb,
+    "zapimoveis": normalize_zapimoveis,
 }
 
 

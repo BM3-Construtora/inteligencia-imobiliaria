@@ -38,7 +38,7 @@ jobs:
         run: python -m src.main collect uniao toca
 
       - name: Collect — HTML scrapers
-        run: python -m src.main collect vivareal chavesnamao imovelweb
+        run: python -m src.main collect vivareal chavesnamao imovelweb zapimoveis
         continue-on-error: true
 
       # Phase 2: Normalize + Classify + Enrich
@@ -53,14 +53,18 @@ jobs:
         run: python -m src.main enrich-llm
         continue-on-error: true
 
-      # Phase 3: Analyze
+      # Phase 3: Deduplicate (before analyze so stats use clean data)
+      - name: Deduplicate
+        run: python -m src.main dedup
+
+      # Phase 4: Analyze
       - name: Analyze
         run: python -m src.main analyze
 
       - name: Trends
         run: python -m src.main trends
 
-      # Phase 4: Score + Risk
+      # Phase 5: Score + Risk
       - name: Hunt
         run: python -m src.main hunt
 
@@ -74,10 +78,7 @@ jobs:
         run: python -m src.main risk
         continue-on-error: true
 
-      # Phase 5: Deduplicate + Notify
-      - name: Deduplicate
-        run: python -m src.main dedup
-
+      # Phase 6: Notify
       - name: Notify (Telegram)
         if: env.TELEGRAM_BOT_TOKEN != ''
         run: python -m src.main notify

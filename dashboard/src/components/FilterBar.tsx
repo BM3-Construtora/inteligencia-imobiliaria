@@ -30,6 +30,7 @@ const SOURCES = [
   { value: 'vivareal', label: 'VivaReal' },
   { value: 'chavesnamao', label: 'Chaves na Mao' },
   { value: 'imovelweb', label: 'Imovelweb' },
+  { value: 'zapimoveis', label: 'ZAP' },
 ]
 
 const PRICE_RANGES = [
