@@ -50,6 +50,7 @@ Comandos:
   viability              Simulação de viabilidade MCMV (4 cenários)
   notify                 Envia alertas Telegram para oportunidades
   report                 Relatório semanal de mercado via Telegram
+  creci                  Coleta dados agregados do CRECI-SP
   pipeline               Roda pipeline completo
 """.strip()
 
@@ -219,6 +220,11 @@ def main() -> None:
         logger.info("=== Starting weekly report ===")
         s = run_weekly_report()
         logger.info(f"=== Report done: {s['sent']} sent ===")
+    elif command == "creci":
+        from src.collectors.creci import run_creci_collector
+        logger.info("=== Starting CRECI-SP collector ===")
+        s = run_creci_collector()
+        logger.info(f"=== CRECI done: {s['metrics_extracted']} metrics ===")
     elif command == "pipeline":
         names = args[1:] if len(args) > 1 else None
         asyncio.run(run_pipeline(names))
