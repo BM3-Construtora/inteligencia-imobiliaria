@@ -41,9 +41,12 @@ jobs:
         run: python -m src.main collect vivareal chavesnamao imovelweb
         continue-on-error: true
 
-      # Phase 2: Normalize + Enrich
+      # Phase 2: Normalize + Classify + Enrich
       - name: Normalize
         run: python -m src.main normalize
+
+      - name: Classify
+        run: python -m src.main classify
 
       - name: Enrich (LLM)
         if: env.GEMINI_API_KEY != ''

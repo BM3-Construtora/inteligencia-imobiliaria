@@ -19,6 +19,7 @@ export interface Listing {
   is_mcmv: boolean
   main_image_url: string | null
   first_seen_at: string
+  market_tier: string | null
 }
 
 export interface Opportunity {
@@ -54,4 +55,8 @@ export interface Neighborhood {
   avg_price_m2_apt: number | null
   total_listings: number
   total_land: number
+  total_houses: number
+  total_listings_by_tier: Record<string, number> | null
+  latitude: number | null
+  longitude: number | null
 }

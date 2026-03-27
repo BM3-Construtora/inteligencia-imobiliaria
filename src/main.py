@@ -36,6 +36,7 @@ Uso: python -m src.main <comando> [args]
 Comandos:
   collect [source ...]   Roda coletores (todos se nenhum especificado)
   normalize              Normaliza raw_listings → listings
+  classify               Classifica listings por market tier (padrão)
   analyze                Gera market snapshots e atualiza bairros
   hunt                   Pontua terrenos e gera oportunidades
   dedup                  Deduplicação cross-portal
@@ -127,10 +128,24 @@ def run_notify() -> None:
     logger.info(f"=== Notifier done: {stats['notified']} sent ===")
 
 
+def run_classify() -> None:
+    """Run the classifier."""
+    from src.classifier import run_classifier
+
+    logger.info("=== Starting classifier ===")
+    stats = run_classifier()
+    logger.info(
+        f"=== Classifier done: "
+        f"{stats['classified']} classified, "
+        f"{stats['skipped']} skipped ==="
+    )
+
+
 async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
-    """Run full pipeline: collect → normalize → analyze → hunt → notify."""
+    """Run full pipeline: collect → normalize → classify → analyze → hunt → notify."""
     await run_collectors(collector_names)
     run_normalize()
+    run_classify()
     run_analyze()
     run_hunt()
     run_notify()
@@ -151,6 +166,8 @@ def main() -> None:
         asyncio.run(run_collectors(names))
     elif command == "normalize":
         run_normalize()
+    elif command == "classify":
+        run_classify()
     elif command == "analyze":
         run_analyze()
     elif command == "hunt":

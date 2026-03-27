@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Opportunity, MarketSnapshot, Neighborhood } from '../types'
 
@@ -122,4 +122,52 @@ export function useNeighborhoods() {
   }, [])
 
   return { neighborhoods, loading }
+}
+
+export function useMapData() {
+  const [neighborhoods, setNeighborhoods] = useState<Neighborhood[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetch() {
+      const { data } = await supabase
+        .from('neighborhoods')
+        .select('*')
+        .not('latitude', 'is', null)
+        .not('longitude', 'is', null)
+        .gt('total_listings', 0)
+        .order('total_listings', { ascending: false })
+
+      setNeighborhoods(data || [])
+      setLoading(false)
+    }
+    fetch()
+  }, [])
+
+  return { neighborhoods, loading }
+}
+
+export function useClassificationStats() {
+  const [tiers, setTiers] = useState<Record<string, number>>({})
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetch() {
+      const { data } = await supabase
+        .from('listings')
+        .select('market_tier')
+        .eq('is_active', true)
+        .not('market_tier', 'is', null)
+
+      const counts: Record<string, number> = {}
+      data?.forEach(r => {
+        counts[r.market_tier] = (counts[r.market_tier] || 0) + 1
+      })
+      setTiers(counts)
+      setLoading(false)
+    }
+    fetch()
+  }, [])
+
+  return { tiers, loading }
 }

@@ -210,16 +210,61 @@ def _update_neighborhood(db: Any, name: str) -> None:
         .eq("property_type", "land")
         .execute()
     )
+    total_houses = (
+        db.table("listings")
+        .select("id", count="exact")
+        .eq("is_active", True)
+        .eq("neighborhood", name)
+        .in_("property_type", ["house", "condo_house"])
+        .execute()
+    )
 
-    data = {
+    # Tier breakdown
+    tier_data = (
+        db.table("listings")
+        .select("market_tier")
+        .eq("is_active", True)
+        .eq("neighborhood", name)
+        .not_.is_("market_tier", "null")
+        .execute()
+    )
+    tier_counts: dict[str, int] = {}
+    for r in tier_data.data:
+        t = r["market_tier"]
+        tier_counts[t] = tier_counts.get(t, 0) + 1
+
+    # Centroid coordinates
+    coords = (
+        db.table("listings")
+        .select("latitude, longitude")
+        .eq("is_active", True)
+        .eq("neighborhood", name)
+        .not_.is_("latitude", "null")
+        .not_.is_("longitude", "null")
+        .execute()
+    )
+    lat_avg = None
+    lng_avg = None
+    if coords.data:
+        lats = [float(r["latitude"]) for r in coords.data]
+        lngs = [float(r["longitude"]) for r in coords.data]
+        lat_avg = round(sum(lats) / len(lats), 6)
+        lng_avg = round(sum(lngs) / len(lngs), 6)
+
+    data: dict[str, Any] = {
         "name": name,
         "avg_price_m2_land": _avg_price_m2("land"),
         "avg_price_m2_house": _avg_price_m2("house"),
         "avg_price_m2_apt": _avg_price_m2("apartment"),
         "total_listings": total.count or 0,
         "total_land": total_land.count or 0,
+        "total_houses": total_houses.count or 0,
+        "total_listings_by_tier": tier_counts,
         "updated_at": now,
     }
+    if lat_avg is not None:
+        data["latitude"] = lat_avg
+        data["longitude"] = lng_avg
 
     db.table("neighborhoods").upsert(data, on_conflict="name").execute()
 
