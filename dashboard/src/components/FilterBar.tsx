@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { useFilters, DEFAULT_FILTERS } from '../contexts/FilterContext'
+import { useFilters } from '../contexts/FilterContext'
 import { supabase } from '../lib/supabase'
+import { SlidersHorizontal, X, Search, RotateCcw } from 'lucide-react'
 
 const PROPERTY_TYPES = [
   { value: 'land', label: 'Terrenos' },
@@ -50,14 +51,14 @@ const AREA_RANGES = [
   { label: '1000m²+', min: 1000, max: null },
 ]
 
-function ToggleChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className={`px-2.5 py-1 text-xs rounded-md transition-all ${
+      className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
         active
-          ? 'bg-indigo-600 text-white shadow-sm'
-          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+          ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+          : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200 border border-slate-700'
       }`}
     >
       {label}
@@ -69,9 +70,21 @@ function toggleInArray(arr: string[], val: string): string[] {
   return arr.includes(val) ? arr.filter(v => v !== val) : [...arr, val]
 }
 
-export function FilterBar() {
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <label className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider mb-2 block">
+      {children}
+    </label>
+  )
+}
+
+interface FilterBarProps {
+  open: boolean
+  onToggle: () => void
+}
+
+export function FilterBar({ open, onToggle }: FilterBarProps) {
   const { filters, updateFilter, resetFilters, activeFilterCount } = useFilters()
-  const [expanded, setExpanded] = useState(false)
   const [neighborhoodOptions, setNeighborhoodOptions] = useState<string[]>([])
   const [neighSearch, setNeighSearch] = useState('')
 
@@ -92,193 +105,227 @@ export function FilterBar() {
     : neighborhoodOptions.slice(0, 20)
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700">
-      {/* Header */}
+    <>
+      {/* Filter toggle button */}
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-5 py-3 flex items-center justify-between text-left"
+        onClick={onToggle}
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+          open
+            ? 'bg-indigo-600 text-white'
+            : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+        }`}
       >
-        <div className="flex items-center gap-3">
-          <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-          </svg>
-          <span className="text-white font-semibold text-sm">Filtros</span>
-          {activeFilterCount > 0 && (
-            <span className="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded-full">
-              {activeFilterCount}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {activeFilterCount > 0 && (
-            <button
-              onClick={(e) => { e.stopPropagation(); resetFilters() }}
-              className="text-xs text-slate-400 hover:text-white transition-colors"
-            >
-              Limpar
-            </button>
-          )}
-          <svg
-            className={`w-4 h-4 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
+        <SlidersHorizontal className="w-4 h-4" />
+        <span>Filtros</span>
+        {activeFilterCount > 0 && (
+          <span className="bg-white/20 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+            {activeFilterCount}
+          </span>
+        )}
       </button>
 
-      {/* Expanded filters */}
-      {expanded && (
-        <div className="px-5 pb-5 space-y-4 border-t border-slate-700 pt-4">
-          {/* Row 1: Property Type + Source */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-slate-400 font-medium mb-1.5 block">Tipo de Imovel</label>
-              <div className="flex flex-wrap gap-1.5">
-                {PROPERTY_TYPES.map(t => (
-                  <ToggleChip
-                    key={t.value}
-                    label={t.label}
-                    active={filters.propertyType.includes(t.value)}
-                    onClick={() => updateFilter('propertyType', toggleInArray(filters.propertyType, t.value))}
-                  />
-                ))}
-              </div>
+      {/* Filter panel */}
+      {open && (
+        <div className="bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6 shadow-2xl shadow-black/20">
+          {/* Panel header */}
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="w-4 h-4 text-indigo-400" />
+              <h3 className="text-white font-semibold text-sm">Filtros Avancados</h3>
+              {activeFilterCount > 0 && (
+                <span className="text-xs text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+                  {activeFilterCount} ativo{activeFilterCount > 1 ? 's' : ''}
+                </span>
+              )}
             </div>
-            <div>
-              <label className="text-xs text-slate-400 font-medium mb-1.5 block">Fonte</label>
-              <div className="flex flex-wrap gap-1.5">
-                {SOURCES.map(s => (
-                  <ToggleChip
-                    key={s.value}
-                    label={s.label}
-                    active={filters.sources.includes(s.value)}
-                    onClick={() => updateFilter('sources', toggleInArray(filters.sources, s.value))}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Row 2: Market Tier */}
-          <div>
-            <label className="text-xs text-slate-400 font-medium mb-1.5 block">Classificacao</label>
-            <div className="flex flex-wrap gap-1.5">
-              {MARKET_TIERS.map(t => (
-                <ToggleChip
-                  key={t.value}
-                  label={t.label}
-                  active={filters.marketTier.includes(t.value)}
-                  onClick={() => updateFilter('marketTier', toggleInArray(filters.marketTier, t.value))}
-                />
-              ))}
+            <div className="flex items-center gap-2">
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={resetFilters}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors px-2 py-1 rounded-md hover:bg-slate-800"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Limpar todos
+                </button>
+              )}
+              <button
+                onClick={onToggle}
+                className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
-          {/* Row 3: Price + Area ranges */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-slate-400 font-medium mb-1.5 block">Faixa de Preco</label>
-              <div className="flex flex-wrap gap-1.5">
-                {PRICE_RANGES.map(r => {
-                  const active = filters.priceMin === r.min && filters.priceMax === r.max
-                  return (
-                    <ToggleChip
-                      key={r.label}
-                      label={r.label}
-                      active={active}
-                      onClick={() => {
-                        if (active) {
-                          updateFilter('priceMin', null)
-                          updateFilter('priceMax', null)
-                        } else {
-                          updateFilter('priceMin', r.min)
-                          updateFilter('priceMax', r.max)
-                        }
-                      }}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Left column */}
+            <div className="space-y-5">
+              {/* Property Type */}
+              <div>
+                <SectionTitle>Tipo de Imovel</SectionTitle>
+                <div className="flex flex-wrap gap-2">
+                  {PROPERTY_TYPES.map(t => (
+                    <Chip
+                      key={t.value}
+                      label={t.label}
+                      active={filters.propertyType.includes(t.value)}
+                      onClick={() => updateFilter('propertyType', toggleInArray(filters.propertyType, t.value))}
                     />
-                  )
-                })}
+                  ))}
+                </div>
               </div>
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 font-medium mb-1.5 block">Faixa de Area</label>
-              <div className="flex flex-wrap gap-1.5">
-                {AREA_RANGES.map(r => {
-                  const active = filters.areaMin === r.min && filters.areaMax === r.max
-                  return (
-                    <ToggleChip
-                      key={r.label}
-                      label={r.label}
-                      active={active}
-                      onClick={() => {
-                        if (active) {
-                          updateFilter('areaMin', null)
-                          updateFilter('areaMax', null)
-                        } else {
-                          updateFilter('areaMin', r.min)
-                          updateFilter('areaMax', r.max)
-                        }
-                      }}
-                    />
-                  )
-                })}
-              </div>
-            </div>
-          </div>
 
-          {/* Row 4: Date range + MCMV + Neighborhood */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="text-xs text-slate-400 font-medium mb-1.5 block">Periodo</label>
-              <div className="flex gap-2">
-                <input
-                  type="date"
-                  value={filters.dateFrom || ''}
-                  onChange={e => updateFilter('dateFrom', e.target.value || null)}
-                  className="flex-1 bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-md border border-slate-600 focus:border-indigo-500 focus:outline-none"
-                />
-                <input
-                  type="date"
-                  value={filters.dateTo || ''}
-                  onChange={e => updateFilter('dateTo', e.target.value || null)}
-                  className="flex-1 bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-md border border-slate-600 focus:border-indigo-500 focus:outline-none"
-                />
+              {/* Sources */}
+              <div>
+                <SectionTitle>Fonte</SectionTitle>
+                <div className="flex flex-wrap gap-2">
+                  {SOURCES.map(s => (
+                    <Chip
+                      key={s.value}
+                      label={s.label}
+                      active={filters.sources.includes(s.value)}
+                      onClick={() => updateFilter('sources', toggleInArray(filters.sources, s.value))}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Price ranges */}
+              <div>
+                <SectionTitle>Faixa de Preco</SectionTitle>
+                <div className="flex flex-wrap gap-2">
+                  {PRICE_RANGES.map(r => {
+                    const active = filters.priceMin === r.min && filters.priceMax === r.max
+                    return (
+                      <Chip
+                        key={r.label}
+                        label={r.label}
+                        active={active}
+                        onClick={() => {
+                          if (active) {
+                            updateFilter('priceMin', null)
+                            updateFilter('priceMax', null)
+                          } else {
+                            updateFilter('priceMin', r.min)
+                            updateFilter('priceMax', r.max)
+                          }
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Area ranges */}
+              <div>
+                <SectionTitle>Faixa de Area</SectionTitle>
+                <div className="flex flex-wrap gap-2">
+                  {AREA_RANGES.map(r => {
+                    const active = filters.areaMin === r.min && filters.areaMax === r.max
+                    return (
+                      <Chip
+                        key={r.label}
+                        label={r.label}
+                        active={active}
+                        onClick={() => {
+                          if (active) {
+                            updateFilter('areaMin', null)
+                            updateFilter('areaMax', null)
+                          } else {
+                            updateFilter('areaMin', r.min)
+                            updateFilter('areaMax', r.max)
+                          }
+                        }}
+                      />
+                    )
+                  })}
+                </div>
               </div>
             </div>
-            <div>
-              <label className="text-xs text-slate-400 font-medium mb-1.5 block">MCMV</label>
-              <div className="flex gap-1.5">
-                <ToggleChip label="Todos" active={filters.isMcmv === null} onClick={() => updateFilter('isMcmv', null)} />
-                <ToggleChip label="Apenas MCMV" active={filters.isMcmv === true} onClick={() => updateFilter('isMcmv', true)} />
-                <ToggleChip label="Sem MCMV" active={filters.isMcmv === false} onClick={() => updateFilter('isMcmv', false)} />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 font-medium mb-1.5 block">
-                Bairro {filters.neighborhoods.length > 0 && `(${filters.neighborhoods.length})`}
-              </label>
-              <input
-                type="text"
-                value={neighSearch}
-                onChange={e => setNeighSearch(e.target.value)}
-                placeholder="Buscar bairro..."
-                className="w-full bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-md border border-slate-600 focus:border-indigo-500 focus:outline-none mb-1.5"
-              />
-              <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                {filteredNeighborhoods.map(n => (
-                  <ToggleChip
-                    key={n}
-                    label={n.length > 20 ? n.slice(0, 18) + '..' : n}
-                    active={filters.neighborhoods.includes(n)}
-                    onClick={() => updateFilter('neighborhoods', toggleInArray(filters.neighborhoods, n))}
-                  />
+
+            {/* Right column */}
+            <div className="space-y-5">
+              {/* Classification */}
+              <div>
+                <SectionTitle>Classificacao de Mercado</SectionTitle>
+                {['Terrenos', 'Casas', 'Aptos'].map(group => (
+                  <div key={group} className="mb-2">
+                    <p className="text-[10px] text-slate-600 font-medium mb-1">{group}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {MARKET_TIERS.filter(t => t.group === group).map(t => (
+                        <Chip
+                          key={t.value}
+                          label={t.label}
+                          active={filters.marketTier.includes(t.value)}
+                          onClick={() => updateFilter('marketTier', toggleInArray(filters.marketTier, t.value))}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 ))}
+              </div>
+
+              {/* Date range + MCMV */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <SectionTitle>Periodo</SectionTitle>
+                  <div className="space-y-2">
+                    <input
+                      type="date"
+                      value={filters.dateFrom || ''}
+                      onChange={e => updateFilter('dateFrom', e.target.value || null)}
+                      className="w-full bg-slate-800 text-slate-200 text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                    />
+                    <input
+                      type="date"
+                      value={filters.dateTo || ''}
+                      onChange={e => updateFilter('dateTo', e.target.value || null)}
+                      className="w-full bg-slate-800 text-slate-200 text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <SectionTitle>MCMV</SectionTitle>
+                  <div className="space-y-2">
+                    <Chip label="Todos" active={filters.isMcmv === null} onClick={() => updateFilter('isMcmv', null)} />
+                    <Chip label="Apenas MCMV" active={filters.isMcmv === true} onClick={() => updateFilter('isMcmv', true)} />
+                    <Chip label="Sem MCMV" active={filters.isMcmv === false} onClick={() => updateFilter('isMcmv', false)} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Neighborhood */}
+              <div>
+                <SectionTitle>
+                  Bairro {filters.neighborhoods.length > 0 && (
+                    <span className="text-indigo-400 normal-case">({filters.neighborhoods.length} selecionado{filters.neighborhoods.length > 1 ? 's' : ''})</span>
+                  )}
+                </SectionTitle>
+                <div className="relative mb-2">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    value={neighSearch}
+                    onChange={e => setNeighSearch(e.target.value)}
+                    placeholder="Buscar bairro..."
+                    className="w-full bg-slate-800 text-slate-200 text-xs pl-8 pr-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                  {filteredNeighborhoods.map(n => (
+                    <Chip
+                      key={n}
+                      label={n.length > 20 ? n.slice(0, 18) + '..' : n}
+                      active={filters.neighborhoods.includes(n)}
+                      onClick={() => updateFilter('neighborhoods', toggleInArray(filters.neighborhoods, n))}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
