@@ -68,23 +68,37 @@ def run_hunter() -> dict[str, int]:
         if scored:
             stats["top_score"] = scored[0][1]
 
-        # Upsert opportunities (avoids duplicates across runs)
+        # Batch upsert opportunities
+        opp_batch: list[dict] = []
         for listing, score, breakdown in scored:
             if score < 30:
                 continue
 
             reason = _build_reason(listing, score, breakdown)
-
-            db.table("opportunities").upsert(
-                {
-                    "listing_id": listing["id"],
-                    "score": score,
-                    "score_breakdown": breakdown,
-                    "reason": reason,
-                },
-                on_conflict="listing_id",
-            ).execute()
+            opp_batch.append({
+                "listing_id": listing["id"],
+                "score": score,
+                "score_breakdown": breakdown,
+                "reason": reason,
+            })
             stats["opportunities"] += 1
+
+        # Flush in batches of 100
+        for i in range(0, len(opp_batch), 100):
+            batch = opp_batch[i:i + 100]
+            try:
+                db.table("opportunities").upsert(
+                    batch, on_conflict="listing_id"
+                ).execute()
+            except Exception:
+                # Fallback: one by one
+                for item in batch:
+                    try:
+                        db.table("opportunities").upsert(
+                            item, on_conflict="listing_id"
+                        ).execute()
+                    except Exception:
+                        pass
 
         logger.info(
             f"[hunter] Done: {stats['scored']} scored, "

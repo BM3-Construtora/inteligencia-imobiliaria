@@ -10,7 +10,7 @@ from src.db import get_client
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 500
+BATCH_SIZE = 100  # Keep small to avoid Supabase statement timeout (8s on free tier)
 
 # ============================================================
 # Type mapping

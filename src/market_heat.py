@@ -22,6 +22,8 @@ def run_market_heat() -> dict[str, int]:
             "avg_price_m2_land, avg_risk_score"
         ).gt("total_listings", 0).execute()
 
+        # Calculate all scores in memory
+        updates: dict[int, list[str]] = {}  # score → list of neighborhood names
         for n in (result.data or []):
             score = _calc_heat(n)
             stats["neighborhoods"] += 1
@@ -29,13 +31,18 @@ def run_market_heat() -> dict[str, int]:
                 stats["hot"] += 1
             elif score <= 30:
                 stats["cold"] += 1
+            updates.setdefault(score, []).append(n["name"])
 
-            try:
-                db.table("neighborhoods").update(
-                    {"market_heat_score": score}
-                ).eq("name", n["name"]).execute()
-            except Exception:
-                pass
+        # Batch update: 1 query per unique score
+        for score, names in updates.items():
+            for i in range(0, len(names), 100):
+                batch = names[i:i + 100]
+                try:
+                    db.table("neighborhoods").update(
+                        {"market_heat_score": score}
+                    ).in_("name", batch).execute()
+                except Exception:
+                    pass
 
         logger.info(
             f"[heat] Done: {stats['neighborhoods']} scored, "
