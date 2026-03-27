@@ -5,6 +5,7 @@ import { ClassificationSummary } from './components/ClassificationSummary'
 import { PropertyMap } from './components/PropertyMap'
 import { FilterBar } from './components/FilterBar'
 import { MarketBenchmarks } from './components/MarketBenchmarks'
+import { PriceTrend } from './components/PriceTrend'
 import { FilterProvider, useFilters } from './contexts/FilterContext'
 import { useFilteredStats } from './hooks/useFilteredData'
 
@@ -86,6 +87,8 @@ function Dashboard() {
         <ClassificationSummary tiers={stats.tiers} loading={loading} />
 
         <PropertyMap />
+
+        <PriceTrend />
 
         <MarketBenchmarks />
 

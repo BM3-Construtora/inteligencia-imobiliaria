@@ -12,6 +12,7 @@ dependencies = [
     "lxml>=5.0",
     "cloudscraper>=1.2",
     "rapidfuzz>=3.0",
+    "scikit-learn>=1.4",
 ]
 
 [project.optional-dependencies]

@@ -59,4 +59,5 @@ export interface Neighborhood {
   total_listings_by_tier: Record<string, number> | null
   latitude: number | null
   longitude: number | null
+  avg_days_on_market: number | null
 }

@@ -100,6 +100,30 @@ def _validate_area(area: Optional[float]) -> Optional[float]:
     return area
 
 
+def _validate_listing(data: dict[str, Any]) -> dict[str, Any]:
+    """Apply semantic validations and fix inconsistencies."""
+    ptype = data.get("property_type")
+    price = data.get("sale_price")
+    total = data.get("total_area")
+    built = data.get("built_area")
+
+    # built_area > total_area is impossible — swap or discard
+    if built and total and built > total:
+        data["built_area"], data["total_area"] = total, built
+        data["price_per_m2"] = _calc_price_per_m2(price, data["total_area"])
+
+    # Suspiciously low prices for residential
+    if price is not None and price < 1000 and ptype in ("house", "apartment", "condo_house"):
+        data["sale_price"] = None
+        data["price_per_m2"] = None
+
+    # Bedrooms = 0 for apartment is likely missing data, not studio
+    if ptype == "apartment" and data.get("bedrooms") == 0:
+        data["bedrooms"] = None
+
+    return data
+
+
 # ============================================================
 # União normalizer
 # ============================================================
@@ -400,6 +424,7 @@ def run_normalizer() -> dict[str, int]:
                         continue
 
                     normalized = normalizer_fn(raw_row["raw_data"])
+                    normalized = _validate_listing(normalized)
                     normalized["last_seen_at"] = now
                     normalized["updated_at"] = now
                     normalized["first_seen_at"] = now

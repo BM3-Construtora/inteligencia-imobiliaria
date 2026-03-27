@@ -251,6 +251,28 @@ def _update_neighborhood(db: Any, name: str) -> None:
         lat_avg = round(sum(lats) / len(lats), 6)
         lng_avg = round(sum(lngs) / len(lngs), 6)
 
+    # Deal velocity: avg days on market
+    dom_data = (
+        db.table("listings")
+        .select("first_seen_at")
+        .eq("is_active", True)
+        .eq("neighborhood", name)
+        .not_.is_("first_seen_at", "null")
+        .execute()
+    )
+    avg_dom = None
+    if dom_data.data:
+        now_dt = datetime.now(timezone.utc)
+        days_list = []
+        for r in dom_data.data:
+            try:
+                fs = datetime.fromisoformat(str(r["first_seen_at"]).replace("Z", "+00:00"))
+                days_list.append((now_dt - fs).days)
+            except (ValueError, TypeError):
+                pass
+        if days_list:
+            avg_dom = round(sum(days_list) / len(days_list))
+
     data: dict[str, Any] = {
         "name": name,
         "avg_price_m2_land": _avg_price_m2("land"),
@@ -260,6 +282,7 @@ def _update_neighborhood(db: Any, name: str) -> None:
         "total_land": total_land.count or 0,
         "total_houses": total_houses.count or 0,
         "total_listings_by_tier": tier_counts,
+        "avg_days_on_market": avg_dom,
         "updated_at": now,
     }
     if lat_avg is not None:

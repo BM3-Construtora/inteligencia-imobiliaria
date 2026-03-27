@@ -145,6 +145,8 @@ export function PropertyMap() {
                       <span className="font-medium">{fmt(n.avg_price_m2_land)}</span>
                       <span className="text-gray-500">R$/m² casa:</span>
                       <span className="font-medium">{fmt(n.avg_price_m2_house)}</span>
+                      <span className="text-gray-500">Tempo medio:</span>
+                      <span className="font-medium">{n.avg_days_on_market != null ? `${n.avg_days_on_market} dias` : '-'}</span>
                     </div>
                     {Object.keys(tiers).length > 0 && (
                       <>

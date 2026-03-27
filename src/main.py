@@ -50,6 +50,7 @@ Comandos:
   viability              Simulação de viabilidade MCMV (4 cenários)
   notify                 Envia alertas Telegram para oportunidades
   report                 Relatório semanal de mercado via Telegram
+  price-model            Treina modelo de predição de preço (terrenos)
   creci                  Coleta dados agregados do CRECI-SP
   pipeline               Roda pipeline completo
 """.strip()
@@ -247,6 +248,11 @@ def main() -> None:
         logger.info("=== Starting weekly report ===")
         s = run_weekly_report()
         logger.info(f"=== Report done: {s['sent']} sent ===")
+    elif command == "price-model":
+        from src.price_model import run_price_model
+        logger.info("=== Starting price model ===")
+        s = run_price_model()
+        logger.info(f"=== Price model done: {s['predicted']} predicted, {s['undervalued']} undervalued ===")
     elif command == "creci":
         from src.collectors.creci import run_creci_collector
         logger.info("=== Starting CRECI-SP collector ===")
