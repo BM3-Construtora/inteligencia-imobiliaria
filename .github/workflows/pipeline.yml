@@ -94,12 +94,5 @@ jobs:
         run: python -m src.main comps
         continue-on-error: true
 
-      # Phase 6: Notify + Alerts
-      - name: Notify (Telegram)
-        if: env.TELEGRAM_BOT_TOKEN != ''
-        run: python -m src.main notify
-
-      - name: Alerts
-        if: env.TELEGRAM_BOT_TOKEN != ''
-        run: python -m src.main alerts
-        continue-on-error: true
+      # Notificações movidas para weekly-report.yml (segunda-feira 9h BRT)
+      # Pipeline diário só coleta e processa dados silenciosamente

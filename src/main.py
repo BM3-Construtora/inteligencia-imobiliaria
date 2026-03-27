@@ -284,15 +284,8 @@ async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
     _run_optional_step("viability", _viability)
     _run_optional_step("comps", _comps)
 
-    # Phase 6: Notify + Alerts
-    _run_optional_step("notify", run_notify)
-
-    def _alerts():
-        from src.alerts import run_alerts
-        logger.info("=== Starting alerts ===")
-        s = run_alerts()
-        logger.info(f"=== Alerts done: {s['matches']} matches ===")
-    _run_optional_step("alerts", _alerts)
+    # Notify/alerts removidos do pipeline diário — consolidados no relatório semanal
+    # (segunda-feira 9h BRT via weekly-report.yml)
 
     elapsed = time.time() - t0
     logger.info(f"=== Pipeline complete in {elapsed:.0f}s ({elapsed/60:.1f}min) ===")

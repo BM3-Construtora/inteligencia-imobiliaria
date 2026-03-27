@@ -73,12 +73,12 @@ def _gather_report_data(db: Any) -> dict[str, Any]:
     # Neighborhoods count
     neighs = db.table("neighborhoods").select("id", count="exact").execute()
 
-    # Top opportunities this week
+    # Top opportunities this week (top 10 for weekly consolidated report)
     opps = (
         db.table("opportunities")
-        .select("score, reason, listing:listings(neighborhood, sale_price, total_area, price_per_m2)")
+        .select("score, reason, listing:listings(neighborhood, sale_price, total_area, price_per_m2, url, is_mcmv, market_tier)")
         .order("score", desc=True)
-        .limit(5)
+        .limit(10)
         .execute()
     )
 
@@ -93,6 +93,9 @@ def _gather_report_data(db: Any) -> dict[str, Any]:
             "price": l.get("sale_price") if l else None,
             "area": l.get("total_area") if l else None,
             "price_m2": l.get("price_per_m2") if l else None,
+            "url": l.get("url") if l else None,
+            "is_mcmv": l.get("is_mcmv") if l else False,
+            "tier": l.get("market_tier") if l else None,
         })
 
     # Market snapshots — latest for land
@@ -192,11 +195,16 @@ def _build_static_report(data: dict[str, Any]) -> str:
 
     # --- Top opportunities ---
     lines.append("")
-    lines.append("TOP 5 OPORTUNIDADES")
+    lines.append("TOP 10 OPORTUNIDADES DA SEMANA")
     for i, o in enumerate(data.get("top_opportunities", []), 1):
         price = f"R$ {float(o['price']):,.0f}" if o.get("price") else "?"
         area = f"{float(o['area']):,.0f}m2" if o.get("area") else "?"
-        lines.append(f"{i}. {o['neighborhood']} — {price} | {area} (score {o['score']:.0f})")
+        mcmv = " [MCMV]" if o.get("is_mcmv") else ""
+        tier = f" ({o['tier']})" if o.get("tier") else ""
+        lines.append(f"{i}. {o['neighborhood']} — {price} | {area}{mcmv}{tier}")
+        lines.append(f"   Score: {o['score']:.0f}/100")
+        if o.get("url"):
+            lines.append(f"   {o['url']}")
 
     # --- Viable projects ---
     viable = data.get("viable_projects", [])
