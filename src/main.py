@@ -170,22 +170,56 @@ def _run_step(name: str, fn) -> bool:
         return False
 
 
+def _run_optional_step(name: str, fn) -> None:
+    """Run an optional pipeline step, log but don't halt on failure."""
+    try:
+        fn()
+    except Exception:
+        logger.exception(f"=== Optional step '{name}' failed, continuing ===")
+
+
 async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
     """Run full pipeline: collect → normalize → classify → dedup → analyze → hunt → notify."""
     await run_collectors(collector_names)
 
-    steps = [
+    # Critical steps (halt on failure)
+    critical_steps = [
         ("normalize", run_normalize),
         ("classify", run_classify),
         ("analyze", run_analyze),
         ("hunt", run_hunt),
-        ("notify", run_notify),
     ]
 
-    for name, fn in steps:
+    for name, fn in critical_steps:
         if not _run_step(name, fn):
             logger.error(f"Pipeline halted at step '{name}'")
             return
+
+    # Optional steps (continue on failure)
+    def _sales():
+        from src.sales_tracker import run_sales_tracker
+        logger.info("=== Starting sales tracker ===")
+        s = run_sales_tracker()
+        logger.info(f"=== Sales done: {s['recorded']} recorded ===")
+
+    def _heat():
+        from src.market_heat import run_market_heat
+        logger.info("=== Starting market heat ===")
+        s = run_market_heat()
+        logger.info(f"=== Heat done: {s['hot']} hot, {s['cold']} cold ===")
+
+    def _comps():
+        from src.comps import run_comps_for_opportunities
+        logger.info("=== Starting comparables ===")
+        s = run_comps_for_opportunities()
+        logger.info(f"=== Comps done: {s['with_comps']} with comps ===")
+
+    _run_optional_step("sales", _sales)
+    _run_optional_step("heat", _heat)
+    _run_optional_step("comps", _comps)
+
+    # Always notify at the end
+    _run_optional_step("notify", run_notify)
 
 
 def main() -> None:

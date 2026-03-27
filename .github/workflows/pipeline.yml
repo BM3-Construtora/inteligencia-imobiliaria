@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e .
 
-      # Phase 1: Collect
+      # Phase 1: Collect (6 sources)
       - name: Collect — APIs (União + Toca)
         run: python -m src.main collect uniao toca
 
@@ -42,7 +42,7 @@ jobs:
         continue-on-error: true
 
       # Phase 2: Normalize + Classify + Enrich
-      - name: Normalize
+      - name: Normalize (+ deactivate stale)
         run: python -m src.main normalize
 
       - name: Classify
@@ -53,18 +53,26 @@ jobs:
         run: python -m src.main enrich-llm
         continue-on-error: true
 
-      # Phase 3: Deduplicate (before analyze so stats use clean data)
+      # Phase 3: Deduplicate
       - name: Deduplicate
         run: python -m src.main dedup
 
-      # Phase 4: Analyze
+      # Phase 4: Analyze + Intelligence
       - name: Analyze
         run: python -m src.main analyze
 
       - name: Trends
         run: python -m src.main trends
 
-      # Phase 5: Score + Risk
+      - name: Sales Tracker
+        run: python -m src.main sales
+        continue-on-error: true
+
+      - name: Market Heat
+        run: python -m src.main heat
+        continue-on-error: true
+
+      # Phase 5: Score + Risk + Viability
       - name: Hunt
         run: python -m src.main hunt
 
@@ -78,7 +86,20 @@ jobs:
         run: python -m src.main risk
         continue-on-error: true
 
-      # Phase 6: Notify
+      - name: Viability
+        run: python -m src.main viability
+        continue-on-error: true
+
+      - name: Comparables
+        run: python -m src.main comps
+        continue-on-error: true
+
+      # Phase 6: Notify + Alerts
       - name: Notify (Telegram)
         if: env.TELEGRAM_BOT_TOKEN != ''
         run: python -m src.main notify
+
+      - name: Alerts
+        if: env.TELEGRAM_BOT_TOKEN != ''
+        run: python -m src.main alerts
+        continue-on-error: true

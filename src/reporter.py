@@ -117,6 +117,35 @@ def _gather_report_data(db: Any) -> dict[str, Any]:
         .execute()
     )
 
+    # Absorption data — hottest neighborhoods
+    hot_neighs = (
+        db.table("neighborhoods")
+        .select("name, absorption_rate, months_of_inventory, market_heat_score, total_listings")
+        .not_.is_("market_heat_score", "null")
+        .order("market_heat_score", desc=True)
+        .limit(5)
+        .execute()
+    )
+
+    # Market indices (SINAPI, MCMV demand)
+    indices = (
+        db.table("market_indices")
+        .select("metric_name, metric_value, metadata")
+        .eq("region", "marilia")
+        .execute()
+    )
+    indices_map = {i["metric_name"]: i["metric_value"] for i in (indices.data or [])}
+
+    # Viable opportunities (viability studies)
+    viable = (
+        db.table("viability_studies")
+        .select("scenario, outputs, listing:listings(neighborhood, sale_price, total_area)")
+        .eq("is_viable", True)
+        .order("id", desc=True)
+        .limit(5)
+        .execute()
+    )
+
     return {
         "total_listings": total.count or 0,
         "total_land": land.count or 0,
@@ -124,6 +153,9 @@ def _gather_report_data(db: Any) -> dict[str, Any]:
         "top_opportunities": top_opps,
         "land_snapshot": land_snapshot,
         "top_neighborhoods": top_neighs.data,
+        "hot_neighborhoods": hot_neighs.data or [],
+        "indices": indices_map,
+        "viable_projects": viable.data or [],
     }
 
 
@@ -131,8 +163,9 @@ def _build_static_report(data: dict[str, Any]) -> str:
     """Build a static report without LLM (fallback)."""
     lines = []
 
+    # --- Market overview ---
     snap = data.get("land_snapshot", {})
-    lines.append("*Mercado de Terrenos*")
+    lines.append("MERCADO DE TERRENOS")
     lines.append(f"Total: {data['total_land']} terrenos ativos")
     if snap:
         avg = snap.get("avg_price")
@@ -141,21 +174,61 @@ def _build_static_report(data: dict[str, Any]) -> str:
             lines.append(f"Preco medio: R$ {float(avg):,.0f}")
         if med:
             lines.append(f"Preco mediano: R$ {float(med):,.0f}")
-        dom = snap.get("avg_days_on_market")
-        if dom:
-            lines.append(f"Tempo medio no mercado: {dom} dias")
 
+    # --- SINAPI + macro ---
+    indices = data.get("indices", {})
+    sinapi = indices.get("sinapi_custo_m2")
+    demanda_f2 = indices.get("demanda_mcmv_faixa2_anual")
+    deficit = indices.get("deficit_habitacional_estimado")
+    if sinapi or demanda_f2:
+        lines.append("")
+        lines.append("INDICADORES")
+        if sinapi:
+            lines.append(f"SINAPI/m2 (SP): R$ {float(sinapi):,.0f}")
+        if demanda_f2:
+            lines.append(f"Demanda MCMV F2: {int(demanda_f2)} un/ano")
+        if deficit:
+            lines.append(f"Deficit habitacional: {int(deficit)} unidades")
+
+    # --- Top opportunities ---
     lines.append("")
-    lines.append("*Top 5 Oportunidades*")
+    lines.append("TOP 5 OPORTUNIDADES")
     for i, o in enumerate(data.get("top_opportunities", []), 1):
         price = f"R$ {float(o['price']):,.0f}" if o.get("price") else "?"
-        area = f"{float(o['area']):,.0f}m²" if o.get("area") else "?"
+        area = f"{float(o['area']):,.0f}m2" if o.get("area") else "?"
         lines.append(f"{i}. {o['neighborhood']} — {price} | {area} (score {o['score']:.0f})")
 
+    # --- Viable projects ---
+    viable = data.get("viable_projects", [])
+    if viable:
+        lines.append("")
+        lines.append("PROJETOS VIAVEIS")
+        for v in viable[:3]:
+            l = v.get("listing")
+            if isinstance(l, list):
+                l = l[0] if l else {}
+            outputs = v.get("outputs", {})
+            neigh = l.get("neighborhood", "?") if l else "?"
+            margem = outputs.get("margem_liquida_pct", 0)
+            vgv = outputs.get("vgv", 0)
+            lines.append(f"- {v['scenario']} em {neigh}: margem {margem:.1f}%, VGV R$ {vgv:,.0f}")
+
+    # --- Hot neighborhoods ---
+    hot = data.get("hot_neighborhoods", [])
+    if hot:
+        lines.append("")
+        lines.append("BAIRROS MAIS QUENTES")
+        for n in hot:
+            heat = n.get("market_heat_score", 0)
+            absorb = n.get("absorption_rate")
+            abs_str = f", absorção {absorb:.1f}%" if absorb else ""
+            lines.append(f"- {n['name']}: calor {heat}/100{abs_str}")
+
+    # --- Neighborhoods ---
     lines.append("")
-    lines.append("*Bairros com mais terrenos*")
+    lines.append("BAIRROS COM MAIS TERRENOS")
     for n in data.get("top_neighborhoods", []):
-        pm2 = f"R$ {float(n['avg_price_m2_land']):,.0f}/m²" if n.get("avg_price_m2_land") else "?"
+        pm2 = f"R$ {float(n['avg_price_m2_land']):,.0f}/m2" if n.get("avg_price_m2_land") else "?"
         lines.append(f"- {n['name']}: {n['total_land']} terrenos ({pm2})")
 
     return "\n".join(lines)
