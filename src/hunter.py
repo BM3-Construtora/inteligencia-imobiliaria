@@ -68,21 +68,22 @@ def run_hunter() -> dict[str, int]:
         if scored:
             stats["top_score"] = scored[0][1]
 
-        # Delete existing opportunities and re-create
-        db.table("opportunities").delete().neq("id", 0).execute()
-
+        # Upsert opportunities (avoids duplicates across runs)
         for listing, score, breakdown in scored:
             if score < 30:
-                continue  # Skip low-scoring listings
+                continue
 
             reason = _build_reason(listing, score, breakdown)
 
-            db.table("opportunities").insert({
-                "listing_id": listing["id"],
-                "score": score,
-                "score_breakdown": breakdown,
-                "reason": reason,
-            }).execute()
+            db.table("opportunities").upsert(
+                {
+                    "listing_id": listing["id"],
+                    "score": score,
+                    "score_breakdown": breakdown,
+                    "reason": reason,
+                },
+                on_conflict="listing_id",
+            ).execute()
             stats["opportunities"] += 1
 
         logger.info(

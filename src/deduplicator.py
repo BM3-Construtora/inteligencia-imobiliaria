@@ -209,13 +209,15 @@ def _set_canonical_listings(db: Any, match_pairs: list[dict]) -> int:
         ids_needed.add(m["listing_a_id"])
         ids_needed.add(m["listing_b_id"])
 
-    # Fetch source info
+    # Batch fetch source info (avoid N+1)
     source_map: dict[int, str] = {}
-    for lid in ids_needed:
+    id_list = list(ids_needed)
+    for i in range(0, len(id_list), 200):
+        batch_ids = id_list[i:i + 200]
         try:
-            result = db.table("listings").select("id, source").eq("id", lid).limit(1).execute()
-            if result.data:
-                source_map[result.data[0]["id"]] = result.data[0]["source"]
+            result = db.table("listings").select("id, source").in_("id", batch_ids).execute()
+            for r in result.data:
+                source_map[r["id"]] = r["source"]
         except Exception:
             pass
 

@@ -55,28 +55,37 @@ Comandos:
 """.strip()
 
 
+async def _run_single_collector(name: str, cls: type) -> None:
+    """Run a single collector with error handling."""
+    logger.info(f"=== Starting collector: {name} ===")
+    collector = cls()
+    try:
+        stats = await collector.run()
+        logger.info(
+            f"=== {name} done: "
+            f"{stats['processed']} processed, "
+            f"{stats['created']} created, "
+            f"{stats['failed']} failed ==="
+        )
+    except Exception:
+        logger.exception(f"=== {name} FAILED ===")
+
+
 async def run_collectors(names: Optional[List[str]] = None) -> None:
-    """Run specified collectors (or all if none specified)."""
+    """Run specified collectors in parallel (or all if none specified)."""
     targets = names or list(COLLECTORS.keys())
 
+    # Separate API collectors (fast, parallel) from HTML scrapers (slower, parallel too)
+    tasks = []
     for name in targets:
         cls = COLLECTORS.get(name)
         if not cls:
             logger.error(f"Unknown collector: {name}")
             continue
+        tasks.append(_run_single_collector(name, cls))
 
-        logger.info(f"=== Starting collector: {name} ===")
-        collector = cls()
-        try:
-            stats = await collector.run()
-            logger.info(
-                f"=== {name} done: "
-                f"{stats['processed']} processed, "
-                f"{stats['created']} created, "
-                f"{stats['failed']} failed ==="
-            )
-        except Exception:
-            logger.exception(f"=== {name} FAILED ===")
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def run_normalize() -> None:
@@ -144,14 +153,32 @@ def run_classify() -> None:
     )
 
 
+def _run_step(name: str, fn) -> bool:
+    """Run a pipeline step, return True if successful."""
+    try:
+        fn()
+        return True
+    except Exception:
+        logger.exception(f"=== Pipeline step '{name}' FAILED — halting ===")
+        return False
+
+
 async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
-    """Run full pipeline: collect → normalize → classify → analyze → hunt → notify."""
+    """Run full pipeline: collect → normalize → classify → dedup → analyze → hunt → notify."""
     await run_collectors(collector_names)
-    run_normalize()
-    run_classify()
-    run_analyze()
-    run_hunt()
-    run_notify()
+
+    steps = [
+        ("normalize", run_normalize),
+        ("classify", run_classify),
+        ("analyze", run_analyze),
+        ("hunt", run_hunt),
+        ("notify", run_notify),
+    ]
+
+    for name, fn in steps:
+        if not _run_step(name, fn):
+            logger.error(f"Pipeline halted at step '{name}'")
+            return
 
 
 def main() -> None:
