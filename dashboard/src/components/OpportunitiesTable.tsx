@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useOpportunities } from '../hooks/useSupabase'
+import { useOpportunities, useViabilityStudies } from '../hooks/useSupabase'
 import type { Listing } from '../types'
 
 function fmt(n: number | null | undefined): string {
@@ -68,9 +68,46 @@ function ScoreBreakdown({ breakdown }: { breakdown: Record<string, number> }) {
   )
 }
 
+function ViabilityBadges({ studies }: { studies: any[] }) {
+  if (!studies?.length) return null
+  const viable = studies.filter(s => s.is_viable)
+  const best = viable.sort((a, b) => (b.outputs?.margem_liquida_pct || 0) - (a.outputs?.margem_liquida_pct || 0))[0]
+
+  return (
+    <div className="mt-3 px-4 border-t border-slate-700 pt-3">
+      <p className="text-xs text-slate-400 mb-2">Viabilidade (calculada pelo pipeline)</p>
+      <div className="flex flex-wrap gap-2">
+        {studies.map((s, i) => {
+          const margin = s.outputs?.margem_liquida_pct || 0
+          const vgv = s.outputs?.vgv || 0
+          const units = s.outputs?.unidades || 0
+          const isBest = s === best
+          return (
+            <div key={i} className={`text-xs rounded-lg px-3 py-2 border ${
+              s.is_viable
+                ? isBest ? 'bg-green-900/40 border-green-700 text-green-300' : 'bg-green-900/20 border-green-800 text-green-400'
+                : 'bg-red-900/20 border-red-800 text-red-400'
+            }`}>
+              <span className="font-semibold">{s.scenario}</span>
+              <span className="ml-2">{units} un.</span>
+              <span className="ml-2">margem {margin.toFixed(1)}%</span>
+              <span className="ml-2">VGV R${(vgv/1000).toFixed(0)}k</span>
+              {isBest && <span className="ml-1 text-[10px]">MELHOR</span>}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function OpportunitiesTable() {
   const { opportunities, loading } = useOpportunities(50)
   const [expandedId, setExpandedId] = useState<number | null>(null)
+
+  // Fetch viability for all opportunity listing IDs
+  const listingIds = opportunities.map(o => o.listing_id)
+  const { studies: viabilityMap } = useViabilityStudies(listingIds)
 
   if (loading) {
     return <div className="text-slate-400 py-8 text-center">Carregando oportunidades...</div>
@@ -147,6 +184,9 @@ export function OpportunitiesTable() {
                             )}
                           </div>
                           <ScoreBreakdown breakdown={opp.score_breakdown || {}} />
+                          {viabilityMap[opp.listing_id] && (
+                            <ViabilityBadges studies={viabilityMap[opp.listing_id]} />
+                          )}
                           {l?.url && (
                             <div className="mt-2 px-4">
                               <a

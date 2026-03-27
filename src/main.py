@@ -179,23 +179,45 @@ def _run_optional_step(name: str, fn) -> None:
 
 
 async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
-    """Run full pipeline: collect → normalize → classify → dedup → analyze → hunt → notify."""
+    """Run full pipeline — mirrors GitHub Actions workflow exactly."""
+    import time
+    t0 = time.time()
+
+    # Phase 1: Collect
     await run_collectors(collector_names)
 
-    # Critical steps (halt on failure)
-    critical_steps = [
-        ("normalize", run_normalize),
-        ("classify", run_classify),
-        ("analyze", run_analyze),
-        ("hunt", run_hunt),
-    ]
+    # Phase 2: Normalize + Classify (critical — halt on failure)
+    if not _run_step("normalize", run_normalize):
+        return
+    if not _run_step("classify", run_classify):
+        return
 
-    for name, fn in critical_steps:
-        if not _run_step(name, fn):
-            logger.error(f"Pipeline halted at step '{name}'")
-            return
+    # Phase 2b: Enrich (optional — LLM may not be configured)
+    def _enrich_llm():
+        from src.enricher_llm import run_llm_enricher
+        logger.info("=== Starting LLM enricher ===")
+        s = run_llm_enricher()
+        logger.info(f"=== LLM Enricher done: {s['enriched']} enriched ===")
+    _run_optional_step("enrich-llm", _enrich_llm)
 
-    # Optional steps (continue on failure)
+    # Phase 3: Dedup
+    def _dedup():
+        from src.deduplicator import run_deduplicator
+        logger.info("=== Starting deduplicator ===")
+        s = run_deduplicator()
+        logger.info(f"=== Dedup done: {s['matches']} matches ===")
+    _run_optional_step("dedup", _dedup)
+
+    # Phase 4: Analyze + Intelligence (critical)
+    if not _run_step("analyze", run_analyze):
+        return
+
+    def _trends():
+        from src.trends import run_trends
+        logger.info("=== Starting trends ===")
+        s = run_trends()
+        logger.info(f"=== Trends done: {s['aquecendo']} aquecendo, {s['esfriando']} esfriando ===")
+
     def _sales():
         from src.sales_tracker import run_sales_tracker
         logger.info("=== Starting sales tracker ===")
@@ -208,18 +230,55 @@ async def run_pipeline(collector_names: Optional[List[str]] = None) -> None:
         s = run_market_heat()
         logger.info(f"=== Heat done: {s['hot']} hot, {s['cold']} cold ===")
 
+    _run_optional_step("trends", _trends)
+    _run_optional_step("sales", _sales)
+    _run_optional_step("heat", _heat)
+
+    # Phase 5: Score + Risk + Viability (critical: hunt)
+    if not _run_step("hunt", run_hunt):
+        return
+
+    def _score_llm():
+        from src.scorer_llm import run_llm_scorer
+        logger.info("=== Starting LLM scorer ===")
+        s = run_llm_scorer()
+        logger.info(f"=== LLM Scorer done: {s['scored']} scored ===")
+
+    def _risk():
+        from src.risk_scorer import run_risk_scorer
+        logger.info("=== Starting risk scorer ===")
+        s = run_risk_scorer()
+        logger.info(f"=== Risk done: {s['assessed']} assessed ===")
+
+    def _viability():
+        from src.viability import run_viability
+        logger.info("=== Starting viability ===")
+        s = run_viability()
+        logger.info(f"=== Viability done: {s['viable']} viable of {s['analyzed']} ===")
+
     def _comps():
         from src.comps import run_comps_for_opportunities
         logger.info("=== Starting comparables ===")
         s = run_comps_for_opportunities()
         logger.info(f"=== Comps done: {s['with_comps']} with comps ===")
 
-    _run_optional_step("sales", _sales)
-    _run_optional_step("heat", _heat)
+    _run_optional_step("score-llm", _score_llm)
+    _run_optional_step("risk", _risk)
+    _run_optional_step("viability", _viability)
     _run_optional_step("comps", _comps)
 
-    # Always notify at the end
+    # Phase 6: Notify + Alerts
     _run_optional_step("notify", run_notify)
+
+    def _alerts():
+        from src.alerts import run_alerts
+        logger.info("=== Starting alerts ===")
+        s = run_alerts()
+        logger.info(f"=== Alerts done: {s['matches']} matches ===")
+    _run_optional_step("alerts", _alerts)
+
+    elapsed = time.time() - t0
+    logger.info(f"=== Pipeline complete in {elapsed:.0f}s ({elapsed/60:.1f}min) ===")
 
 
 def main() -> None:

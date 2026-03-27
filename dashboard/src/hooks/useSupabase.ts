@@ -81,6 +81,61 @@ export function useOpportunities(limit = 20) {
   return { opportunities, loading }
 }
 
+export function useViabilityStudies(listingIds: number[]) {
+  const [studies, setStudies] = useState<Record<number, any[]>>({})
+  const [loading, setLoading] = useState(true)
+
+  const key = listingIds.join(',')
+
+  useEffect(() => {
+    if (!listingIds.length) { setLoading(false); return }
+    async function fetch() {
+      const { data } = await supabase
+        .from('viability_studies')
+        .select('listing_id, scenario, outputs, is_viable')
+        .in('listing_id', listingIds)
+
+      const grouped: Record<number, any[]> = {}
+      data?.forEach(s => {
+        if (!grouped[s.listing_id]) grouped[s.listing_id] = []
+        grouped[s.listing_id].push(s)
+      })
+      setStudies(grouped)
+      setLoading(false)
+    }
+    fetch()
+  }, [key])
+
+  return { studies, loading }
+}
+
+export function useSoldEstimates() {
+  const [data, setData] = useState<{ total: number; byNeighborhood: Record<string, number> }>({
+    total: 0, byNeighborhood: {}
+  })
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetch() {
+      const { data: rows } = await supabase
+        .from('sold_estimates')
+        .select('neighborhood')
+
+      const byNeighborhood: Record<string, number> = {}
+      rows?.forEach(r => {
+        if (r.neighborhood) {
+          byNeighborhood[r.neighborhood] = (byNeighborhood[r.neighborhood] || 0) + 1
+        }
+      })
+      setData({ total: rows?.length || 0, byNeighborhood })
+      setLoading(false)
+    }
+    fetch()
+  }, [])
+
+  return { ...data, loading }
+}
+
 export function useMarketSnapshots() {
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([])
   const [loading, setLoading] = useState(true)
