@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_listings_canonical_active
   ON listings (canonical_listing_id) WHERE canonical_listing_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_price_history_listing
-  ON price_history (listing_id, created_at DESC);
+  ON price_history (listing_id, detected_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_listings_property_group
   ON listings (COALESCE(canonical_listing_id, id));
