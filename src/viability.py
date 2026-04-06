@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 BDI_PCT = 0.22
 
 # MCMV program parameters (2025-2026)
+# Modelo BM3: casas INDIVIDUAIS em lotes separados (não condomínio geminado).
+# Terreno grande → subdivide em lotes de tamanho mínimo → 1 casa por lote.
 MCMV_FAIXAS = {
     "mcmv_faixa1": {
         "nome": "MCMV Faixa 1",
@@ -27,10 +29,9 @@ MCMV_FAIXAS = {
         "valor_max_imovel": 190000,
         "subsidio_max": 55000,
         "taxa_juros_aa": 0.04,
-        "unidade_area_m2": 40,
-        "pavimentos": 2,
-        "taxa_aproveitamento": 0.55,
-        "custo_multiplier": 0.85,  # Faixa 1 = padrão mais simples
+        "unidade_area_m2": 40,          # Área construída por casa
+        "lote_minimo_m2": 200,          # Lote mínimo por unidade
+        "custo_multiplier": 0.85,       # Faixa 1 = padrão mais simples
     },
     "mcmv_faixa2": {
         "nome": "MCMV Faixa 2",
@@ -38,9 +39,8 @@ MCMV_FAIXAS = {
         "valor_max_imovel": 264000,
         "subsidio_max": 55000,
         "taxa_juros_aa": 0.05,
-        "unidade_area_m2": 45,
-        "pavimentos": 2,
-        "taxa_aproveitamento": 0.60,
+        "unidade_area_m2": 50,          # Casa 2 quartos padrão MCMV
+        "lote_minimo_m2": 250,          # Mínimo exigido
         "custo_multiplier": 1.0,
     },
     "mcmv_faixa3": {
@@ -49,9 +49,8 @@ MCMV_FAIXAS = {
         "valor_max_imovel": 350000,
         "subsidio_max": 0,
         "taxa_juros_aa": 0.075,
-        "unidade_area_m2": 55,
-        "pavimentos": 2,
-        "taxa_aproveitamento": 0.55,
+        "unidade_area_m2": 60,          # Casa 3 quartos
+        "lote_minimo_m2": 250,
         "custo_multiplier": 1.15,
     },
     "casa_padrao": {
@@ -60,9 +59,8 @@ MCMV_FAIXAS = {
         "valor_max_imovel": 500000,
         "subsidio_max": 0,
         "taxa_juros_aa": 0.11,
-        "unidade_area_m2": 70,
-        "pavimentos": 1,
-        "taxa_aproveitamento": 0.50,
+        "unidade_area_m2": 80,          # Casa 3 quartos padrão médio
+        "lote_minimo_m2": 300,
         "custo_multiplier": 1.40,
     },
 }
@@ -110,16 +108,17 @@ def simulate_project(
     custo_m2 = sinapi * faixa["custo_multiplier"]
 
     # --- Units calculation ---
-    area_construivel = land_area * faixa["taxa_aproveitamento"] * faixa["pavimentos"]
-    # Fator de eficiência: corredores, escadas, áreas comuns = ~18% de perda
-    area_vendavel = area_construivel * 0.82
+    # Modelo BM3: casas individuais em lotes separados.
+    # Terreno grande → subdivide em N lotes → 1 casa por lote.
+    # Terreno pequeno (1 lote) → 1 casa.
+    lote_minimo = faixa["lote_minimo_m2"]
     unidade_area = faixa["unidade_area_m2"]
-    unidades = int(area_vendavel / unidade_area)
+    unidades = max(1, int(land_area / lote_minimo))
 
-    if unidades < 1:
-        return None
+    if land_area < lote_minimo * 0.8:
+        return None  # Terreno muito pequeno para essa faixa
 
-    area_total = unidades * unidade_area
+    area_total = unidades * unidade_area  # Total construído (não é a área do terreno)
 
     # --- Costs ---
     custo_terreno = land_price
