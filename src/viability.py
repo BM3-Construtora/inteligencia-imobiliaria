@@ -16,61 +16,85 @@ from src.db import get_client
 logger = logging.getLogger(__name__)
 
 # BDI (Benefícios e Despesas Indiretas) — padrão MCMV construtoras pequenas/médias
-# 30% é para grandes obras públicas; MCMV padronizado usa 20-22%
 BDI_PCT = 0.22
 
-# MCMV program parameters (2025-2026)
-# Modelo BM3: casas INDIVIDUAIS em lotes separados (não condomínio geminado).
-# Terreno grande → subdivide em lotes de tamanho mínimo → 1 casa por lote.
+# ============================================================
+# MCMV 2026 — Atualizado conforme Portaria MCID mar/2026
+# Fonte: gov.br/cidades, Portaria 725/2023 (especificações),
+#        Portaria 335/2026 (atualizações)
+# ============================================================
+#
+# Modelo BM3: terreno 10×25m (250m²) → desdobra em 2 lotes de
+# 5×25m (125m² cada) → 1 casa por lote.
+# Lote mínimo MCMV: 125m² (Portaria 725/2023)
+# Área construída mínima: 40m² (casa térrea)
+#
+# Benefícios fiscais para construtora:
+# - RET MCMV Faixa 1: 1% sobre receita (IRPJ+CSLL+PIS+COFINS unificados)
+# - RET demais faixas: 4% sobre receita (vs 9.25% regime normal)
+# - Prazo para aderir ao RET: até 31/12/2028
+# - Patrimônio de afetação: cada obra = CNPJ próprio
+#
+# Financiamento Caixa "Apoio à Produção":
+# - Até 100% do custo de obra financiado
+# - Até 36 meses para construir + 9 meses de carência
+# - Taxa: ~9.5% a.a. (MCMV)
+# - Liberação mensal por medição
+# - Capital próprio necessário: terreno + capital de giro inicial
+#
 MCMV_FAIXAS = {
     "mcmv_faixa1": {
         "nome": "MCMV Faixa 1",
-        "renda_max": 2850,
-        "valor_max_imovel": 190000,
+        "renda_max": 3200,              # Atualizado mar/2026
+        "valor_max_imovel": 190000,     # Faixa 1 urbana (varia por localidade)
         "subsidio_max": 55000,
         "taxa_juros_aa": 0.04,
-        "unidade_area_m2": 40,          # Área construída por casa
-        "lote_minimo_m2": 200,          # Lote mínimo por unidade
-        "custo_multiplier": 0.85,       # Faixa 1 = padrão mais simples
+        "ret_pct": 0.01,               # RET 1% (benefício fiscal)
+        "unidade_area_m2": 40,          # Mínimo Portaria 725
+        "lote_minimo_m2": 125,          # Lote mínimo MCMV
+        "custo_multiplier": 0.85,       # Padrão mais simples
     },
     "mcmv_faixa2": {
         "nome": "MCMV Faixa 2",
-        "renda_max": 4700,
-        "valor_max_imovel": 264000,
+        "renda_max": 5000,              # Atualizado mar/2026
+        "valor_max_imovel": 264000,     # Teto Faixa 2 urbana
         "subsidio_max": 55000,
-        "taxa_juros_aa": 0.05,
-        "unidade_area_m2": 50,          # Casa 2 quartos padrão MCMV
-        "lote_minimo_m2": 250,          # Mínimo exigido
+        "taxa_juros_aa": 0.065,
+        "ret_pct": 0.04,               # RET 4%
+        "unidade_area_m2": 50,          # Casa 2 quartos
+        "lote_minimo_m2": 125,          # Desdobro: 250m² → 2×125m²
         "custo_multiplier": 1.0,
     },
     "mcmv_faixa3": {
         "nome": "MCMV Faixa 3",
-        "renda_max": 8600,
-        "valor_max_imovel": 350000,
+        "renda_max": 9600,              # Atualizado mar/2026
+        "valor_max_imovel": 400000,     # Atualizado: era 350k
         "subsidio_max": 0,
-        "taxa_juros_aa": 0.075,
+        "taxa_juros_aa": 0.0816,
+        "ret_pct": 0.04,               # RET 4%
         "unidade_area_m2": 60,          # Casa 3 quartos
-        "lote_minimo_m2": 250,
+        "lote_minimo_m2": 125,
         "custo_multiplier": 1.15,
     },
     "casa_padrao": {
         "nome": "Casa Padrão Médio",
         "renda_max": 15000,
-        "valor_max_imovel": 500000,
+        "valor_max_imovel": 600000,     # Atualizado: era 500k (Faixa 4)
         "subsidio_max": 0,
         "taxa_juros_aa": 0.11,
-        "unidade_area_m2": 80,          # Casa 3 quartos padrão médio
-        "lote_minimo_m2": 300,
+        "ret_pct": 0.04,
+        "unidade_area_m2": 80,
+        "lote_minimo_m2": 150,
         "custo_multiplier": 1.40,
     },
 }
 
-# Cost percentages over VGV
-CUSTO_PROJETOS_PCT = 0.05
-CUSTO_MARKETING_PCT = 0.03
-CUSTO_ADMIN_PCT = 0.04
-CUSTO_IMPOSTOS_PCT = 0.04
-CUSTO_INFRA_PCT = 0.12
+# Custos operacionais (% do VGV)
+CUSTO_PROJETOS_PCT = 0.05       # Projetos (arquitetura, estrutural, etc.)
+CUSTO_MARKETING_PCT = 0.02      # MCMV vende fácil (subsídio), 2% suficiente
+CUSTO_ADMIN_PCT = 0.03          # Construtora familiar = overhead baixo
+CUSTO_INFRA_PCT = 0.10          # Infraestrutura (água, esgoto, luz, calçada)
+# Impostos: usando RET (1% Faixa 1 ou 4% demais) — calculado dinamicamente
 
 # GO/NO-GO criteria
 MIN_MARGEM_PCT = 15.0
@@ -144,7 +168,9 @@ def simulate_project(
     # --- Operational costs (% of VGV) ---
     custo_marketing = vgv * CUSTO_MARKETING_PCT
     custo_admin = vgv * CUSTO_ADMIN_PCT
-    custo_impostos = vgv * CUSTO_IMPOSTOS_PCT
+    # Impostos via RET: 1% (Faixa 1) ou 4% (demais) — vs 9.25% regime normal
+    ret_pct = faixa.get("ret_pct", 0.04)
+    custo_impostos = vgv * ret_pct
     custos_operacionais = custo_marketing + custo_admin + custo_impostos
 
     # --- Totals ---
