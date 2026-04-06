@@ -72,8 +72,15 @@ def run_deduplicator() -> dict[str, int]:
             if n:
                 by_neighborhood.setdefault(n, []).append(l)
 
-        # Clear existing matches and re-compute
-        db.table("listing_matches").delete().neq("id", 0).execute()
+        # Note: we no longer wipe listing_matches on each run.
+        # Instead we skip pairs that already have a match recorded.
+        existing_pairs: set[tuple[int, int]] = set()
+        try:
+            em = db.table("listing_matches").select("listing_a_id, listing_b_id").execute()
+            for row in (em.data or []):
+                existing_pairs.add((row["listing_a_id"], row["listing_b_id"]))
+        except Exception:
+            pass
 
         # Compare within each neighborhood
         match_pairs: list[dict] = []
@@ -93,12 +100,16 @@ def run_deduplicator() -> dict[str, int]:
 
                     if score >= MIN_MATCH_SCORE:
                         a_id, b_id = sorted([a["id"], b["id"]])
+                        pair_key = (a_id, b_id)
+                        if pair_key in existing_pairs:
+                            continue  # Already recorded
                         match_pairs.append({
                             "listing_a_id": a_id,
                             "listing_b_id": b_id,
-                            "match_score": round(score, 2),
+                            "match_score": round(score, 3),
                             "match_method": method,
                         })
+                        existing_pairs.add(pair_key)
                         stats["matches"] += 1
                         if score >= HIGH_CONFIDENCE:
                             stats["high_confidence"] += 1

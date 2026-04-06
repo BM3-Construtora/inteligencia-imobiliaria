@@ -539,12 +539,26 @@ def _detect_price_change(
 
     change_pct = round(((new_price - old_price) / old_price) * 100, 2)
 
-    db.table("price_history").insert({
+    record: dict[str, Any] = {
         "listing_id": old["id"],
         "old_price": old_price,
         "new_price": new_price,
         "change_pct": change_pct,
-    }).execute()
+    }
+    # Add source if column exists (migration 012)
+    if new.get("source"):
+        record["source"] = new["source"]
+
+    try:
+        db.table("price_history").insert(record).execute()
+    except Exception:
+        # source column may not exist yet
+        db.table("price_history").insert({
+            "listing_id": old["id"],
+            "old_price": old_price,
+            "new_price": new_price,
+            "change_pct": change_pct,
+        }).execute()
 
     stats["price_changes"] += 1
     logger.info(
