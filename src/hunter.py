@@ -47,6 +47,7 @@ def run_hunter() -> dict[str, int]:
                     "price_per_m2, neighborhood, latitude, longitude, "
                     "is_mcmv, title, address, first_seen_at, features")
             .eq("is_active", True)
+            .is_("canonical_listing_id", "null")
             .eq("property_type", "land")
             .not_.is_("sale_price", "null")
             .gt("sale_price", 5000)  # Filter out placeholder/error prices

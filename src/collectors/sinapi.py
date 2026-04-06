@@ -12,9 +12,11 @@ from src.db import get_client
 logger = logging.getLogger(__name__)
 
 # IBGE SINAPI API — Table 2296: National construction cost index by state
-# Variables: 1198 = Custo médio m² (R$), 1196 = Variação mensal (%)
+# Variables: 48 = Custo médio m² em Reais (valor absoluto)
+#            1196 = Variação mensal (%)
+#            1198 = Variação % em 12 meses (NÃO é o custo absoluto!)
 SINAPI_TABLE = "2296"
-SINAPI_URL = f"https://servicodados.ibge.gov.br/api/v3/agregados/{SINAPI_TABLE}/periodos/-6/variaveis/1198|1196"
+SINAPI_URL = f"https://servicodados.ibge.gov.br/api/v3/agregados/{SINAPI_TABLE}/periodos/-6/variaveis/48|1196"
 SP_CODE = "35"  # São Paulo state code
 
 
@@ -47,8 +49,8 @@ def run_sinapi_collector() -> dict[str, int]:
                         # Period format: "202601" → "2026-01"
                         formatted_period = f"{period[:4]}-{period[4:]}" if len(period) == 6 else period
 
-                        metric_name = "sinapi_custo_m2" if var_id == "1198" else "sinapi_variacao_mensal_pct"
-                        unit = "R$/m²" if var_id == "1198" else "%"
+                        metric_name = "sinapi_custo_m2" if var_id == "48" else "sinapi_variacao_mensal_pct"
+                        unit = "R$/m²" if var_id == "48" else "%"
 
                         metrics.append({
                             "source": "sinapi",

@@ -76,6 +76,7 @@ def _get_active_neighborhoods(
         db.table("listings")
         .select("neighborhood")
         .eq("is_active", True)
+        .is_("canonical_listing_id", "null")
         .not_.is_("neighborhood", "null")
     )
     if property_type:
@@ -103,6 +104,7 @@ def _calc_snapshot(
         db.table("listings")
         .select("sale_price, total_area, price_per_m2, first_seen_at")
         .eq("is_active", True)
+        .is_("canonical_listing_id", "null")
         .not_.is_("sale_price", "null")
         .gt("sale_price", 0)
     )
@@ -190,6 +192,7 @@ def _update_all_neighborhoods(db: Any) -> int:
             .select("neighborhood, property_type, market_tier, price_per_m2, "
                     "latitude, longitude, first_seen_at, is_active")
             .eq("is_active", True)
+            .is_("canonical_listing_id", "null")
             .not_.is_("neighborhood", "null")
             .range(offset, offset + page_size - 1)
             .execute()

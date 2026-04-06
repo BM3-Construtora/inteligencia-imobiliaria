@@ -427,7 +427,7 @@ def run_normalizer() -> dict[str, int]:
                     normalized = _validate_listing(normalized)
                     normalized["last_seen_at"] = now
                     normalized["updated_at"] = now
-                    normalized["first_seen_at"] = now
+                    # first_seen_at is set below per-item (preserve for existing)
 
                     normalized_batch.append(normalized)
                     raw_ids.append(raw_row["id"])
@@ -443,6 +443,41 @@ def run_normalizer() -> dict[str, int]:
                 if stats["failed"] > 0:
                     break
                 continue
+
+            # Phase 1b: Lookup existing listings to preserve first_seen_at
+            # and detect price changes
+            existing_map: dict[str, dict] = {}
+            keys = [(n["source"], n["source_id"]) for n in normalized_batch]
+            for i in range(0, len(keys), 50):
+                chunk_keys = keys[i:i + 50]
+                for source, source_id in chunk_keys:
+                    try:
+                        r = (
+                            db.table("listings")
+                            .select("id, source, source_id, first_seen_at, sale_price")
+                            .eq("source", source)
+                            .eq("source_id", source_id)
+                            .limit(1)
+                            .execute()
+                        )
+                        if r.data:
+                            row = r.data[0]
+                            existing_map[f"{row['source']}:{row['source_id']}"] = row
+                    except Exception:
+                        pass
+
+            # Set first_seen_at: preserve for existing, set NOW for new
+            for normalized in normalized_batch:
+                key = f"{normalized['source']}:{normalized['source_id']}"
+                existing = existing_map.get(key)
+                if existing:
+                    normalized["first_seen_at"] = existing["first_seen_at"]
+                    # Detect price changes
+                    _detect_price_change(
+                        db, existing, normalized, stats
+                    )
+                else:
+                    normalized["first_seen_at"] = now
 
             # Phase 2: Batch upsert listings (1 API call for entire batch)
             try:
