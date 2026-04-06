@@ -41,9 +41,9 @@ SELECT
       'old_price', ph.old_price,
       'new_price', ph.new_price,
       'change_pct', ph.change_pct,
-      'changed_at', ph.created_at,
+      'changed_at', ph.detected_at,
       'source', ph.source
-    ) ORDER BY ph.created_at DESC)
+    ) ORDER BY ph.detected_at DESC)
     FROM price_history ph WHERE ph.listing_id = l.id
   ) AS price_changes
 FROM listings l
