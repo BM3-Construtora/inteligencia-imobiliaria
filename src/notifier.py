@@ -57,6 +57,21 @@ def run_notifier() -> dict[str, int]:
         stats["checked"] = len(opportunities)
         logger.info(f"[notifier] Found {len(opportunities)} unnotified opportunities")
 
+        # Pre-fetch viability status for all listing_ids
+        listing_ids = [o["listing_id"] for o in opportunities]
+        viable_set: set[int] = set()
+        if listing_ids:
+            for i in range(0, len(listing_ids), 100):
+                batch_ids = listing_ids[i:i + 100]
+                vr = (
+                    db.table("viability_studies")
+                    .select("listing_id")
+                    .in_("listing_id", batch_ids)
+                    .eq("is_viable", True)
+                    .execute()
+                )
+                viable_set.update(v["listing_id"] for v in (vr.data or []))
+
         for opp in opportunities:
             listing = opp.get("listing")
             if isinstance(listing, list):
@@ -64,8 +79,25 @@ def run_notifier() -> dict[str, int]:
             if not listing:
                 continue
 
+            # Skip opportunities where viability was assessed and ALL scenarios failed
+            lid = opp["listing_id"]
+            has_viability = lid in listing_ids
+            is_viable = lid in viable_set
+            if has_viability and not is_viable:
+                # Viability assessed but no scenario is viable — don't notify
+                logger.info(
+                    f"[notifier] Skipping #{opp['id']} (score={opp['score']}) "
+                    f"— no viable scenario"
+                )
+                # Mark as notified to avoid re-checking
+                db.table("opportunities").update({
+                    "is_notified": True,
+                    "notified_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", opp["id"]).execute()
+                continue
+
             try:
-                message = _format_message(opp, listing)
+                message = _format_message(opp, listing, is_viable)
                 image_url = listing.get("main_image_url")
 
                 if image_url:
@@ -99,7 +131,8 @@ def run_notifier() -> dict[str, int]:
     return stats
 
 
-def _format_message(opp: dict[str, Any], listing: dict[str, Any]) -> str:
+def _format_message(opp: dict[str, Any], listing: dict[str, Any],
+                    is_viable: bool = False) -> str:
     """Format a Telegram message for an opportunity."""
     score = opp["score"]
     price = float(listing.get("sale_price") or 0)
@@ -115,8 +148,12 @@ def _format_message(opp: dict[str, Any], listing: dict[str, Any]) -> str:
     lng = listing.get("longitude")
 
     # Score emoji
-    if score >= 80:
+    if score >= 80 and is_viable:
+        header = "🔴 OPORTUNIDADE QUENTE — VIÁVEL"
+    elif score >= 80:
         header = "🔴 OPORTUNIDADE QUENTE"
+    elif score >= 70 and is_viable:
+        header = "🟡 BOA OPORTUNIDADE — VIÁVEL"
     elif score >= 70:
         header = "🟡 BOA OPORTUNIDADE"
     else:

@@ -328,13 +328,12 @@ def _score_listing(
             pass
     breakdown["stale_bonus"] = stale
 
-    # --- Source confidence (10pts) ---
+    # --- Source confidence (multiplier only, no additive points) ---
     confidence = SOURCE_CONFIDENCE.get(source, 0.70)
-    breakdown["source_confidence"] = round(confidence * 10)
 
     raw_total = sum(breakdown.values())
 
-    # Apply source confidence as multiplier to the raw score
+    # Apply source confidence as multiplier (not additive — avoids double-penalty)
     final = round(raw_total * confidence, 1)
     breakdown["raw_total"] = raw_total
     breakdown["confidence_multiplier"] = confidence

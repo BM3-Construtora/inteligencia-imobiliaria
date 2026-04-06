@@ -84,9 +84,31 @@ def run_risk_scorer(limit: int = 30) -> dict[str, int]:
                     if max_risk >= 4:
                         stats["high_risk"] += 1
 
-                    db.table("opportunities").update({
-                        "score_breakdown": new_bd,
-                    }).eq("id", opp["id"]).execute()
+                    # Penalizar score baseado no risco máximo:
+                    # risco 3 = -5pts, risco 4 = -15pts, risco 5 = -25pts
+                    original_score = opp.get("score", 0)
+                    penalty = 0
+                    if max_risk >= 5:
+                        penalty = 25
+                    elif max_risk >= 4:
+                        penalty = 15
+                    elif max_risk >= 3:
+                        penalty = 5
+                    adjusted_score = max(0, round(original_score - penalty, 1))
+
+                    update_data: dict[str, Any] = {"score_breakdown": new_bd}
+                    if penalty > 0:
+                        update_data["score"] = adjusted_score
+                        new_bd["risk_penalty"] = penalty
+                        logger.info(
+                            f"[risk] #{opp['listing_id']}: "
+                            f"score {original_score} → {adjusted_score} "
+                            f"(risk penalty -{penalty})"
+                        )
+
+                    db.table("opportunities").update(
+                        update_data
+                    ).eq("id", opp["id"]).execute()
 
                     stats["assessed"] += 1
                     resumo = risk.get("resumo", "")

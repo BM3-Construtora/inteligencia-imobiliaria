@@ -15,8 +15,9 @@ from src.db import get_client
 
 logger = logging.getLogger(__name__)
 
-# BDI (Benefícios e Despesas Indiretas) — industry standard for small/medium builders
-BDI_PCT = 0.30
+# BDI (Benefícios e Despesas Indiretas) — padrão MCMV construtoras pequenas/médias
+# 30% é para grandes obras públicas; MCMV padronizado usa 20-22%
+BDI_PCT = 0.22
 
 # MCMV program parameters (2025-2026)
 MCMV_FAIXAS = {
@@ -110,8 +111,10 @@ def simulate_project(
 
     # --- Units calculation ---
     area_construivel = land_area * faixa["taxa_aproveitamento"] * faixa["pavimentos"]
+    # Fator de eficiência: corredores, escadas, áreas comuns = ~18% de perda
+    area_vendavel = area_construivel * 0.82
     unidade_area = faixa["unidade_area_m2"]
-    unidades = int(area_construivel / unidade_area)
+    unidades = int(area_vendavel / unidade_area)
 
     if unidades < 1:
         return None
@@ -129,8 +132,11 @@ def simulate_project(
     custo_total_obra = custo_construcao + custo_infra + custo_projetos
 
     # --- Revenue ---
+    # MCMV: preço de venda = teto da faixa (valor fixo financiável pela Caixa).
+    # Não varia com mercado — comprador paga o teto com subsídio + financiamento.
+    # Para casa_padrao (não-MCMV), usa mercado como referência.
     preco_venda_unidade = faixa["valor_max_imovel"]
-    if neighborhood_avg_price_m2 and neighborhood_avg_price_m2 > 0:
+    if faixa_key == "casa_padrao" and neighborhood_avg_price_m2 and neighborhood_avg_price_m2 > 0:
         preco_mercado = neighborhood_avg_price_m2 * unidade_area
         preco_venda_unidade = min(preco_venda_unidade, preco_mercado * 1.05)
 
