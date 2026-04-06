@@ -36,6 +36,7 @@ jobs:
       # Phase 1: Collect (6 sources)
       - name: Collect — APIs (União + Toca)
         run: python -m src.main collect uniao toca
+        continue-on-error: true
 
       - name: Collect — HTML scrapers
         run: python -m src.main collect vivareal chavesnamao imovelweb zapimoveis

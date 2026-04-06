@@ -100,7 +100,8 @@ class ZapImoveisCollector(BaseCollector):
         bath_match = re.search(r"(\d+)\s*banheir", name, re.IGNORECASE)
         parking_match = re.search(r"(\d+)\s*vaga", name, re.IGNORECASE)
 
-        price = url_data.get("price")
+        # Price: prefer JSON-LD offers, fallback to URL
+        price = _extract_price_from_offers(item) or url_data.get("price")
 
         images = item.get("image", [])
         if isinstance(images, str):
@@ -109,14 +110,36 @@ class ZapImoveisCollector(BaseCollector):
         schema_type = item.get("@type", "").lower()
         prop_type = _map_schema_type(schema_type) or url_data.get("type", "other")
 
-        area = int(area_match.group(1)) if area_match else url_data.get("area")
+        # Area: prefer floorSize (JSON-LD), then name regex, then URL
+        floor_size = item.get("floorSize")
+        area = None
+        if isinstance(floor_size, dict):
+            area = _safe_int(floor_size.get("value"))
+        elif isinstance(floor_size, (int, float)):
+            area = int(floor_size) if floor_size > 0 else None
+        if not area:
+            area = int(area_match.group(1)) if area_match else url_data.get("area")
         if area is not None and area <= 15:
             desc = item.get("description", "")
             desc_area = re.search(r"(\d{2,})\s*m[²2]", desc)
-            if desc_area:
-                area = int(desc_area.group(1))
-            else:
-                area = None
+            area = int(desc_area.group(1)) if desc_area else None
+
+        # Bedrooms/bathrooms: prefer JSON-LD structured fields
+        bedrooms = _safe_int(item.get("numberOfBedrooms")) or (
+            int(rooms_match.group(1)) if rooms_match else None
+        )
+        bathrooms = _safe_int(item.get("numberOfBathroomsTotal")) or (
+            int(bath_match.group(1)) if bath_match else None
+        )
+
+        # Address from JSON-LD
+        address_data = item.get("address", {})
+        street = None
+        neighborhood = url_data.get("neighborhood")
+        if isinstance(address_data, dict):
+            street = address_data.get("streetAddress")
+            if not neighborhood:
+                neighborhood = address_data.get("addressLocality")
 
         return {
             "id": item_id,
@@ -126,10 +149,11 @@ class ZapImoveisCollector(BaseCollector):
             "type": prop_type,
             "price": price,
             "area": area,
-            "bedrooms": int(rooms_match.group(1)) if rooms_match else None,
-            "bathrooms": int(bath_match.group(1)) if bath_match else None,
+            "bedrooms": bedrooms,
+            "bathrooms": bathrooms,
             "parking": int(parking_match.group(1)) if parking_match else None,
-            "neighborhood": url_data.get("neighborhood"),
+            "street": street,
+            "neighborhood": neighborhood,
             "city": "Marília",
             "state": "SP",
             "images": images,
@@ -168,6 +192,34 @@ class ZapImoveisCollector(BaseCollector):
 
     def extract_source_id(self, item: dict[str, Any]) -> str:
         return str(item["id"])
+
+
+def _safe_int(val: Any) -> int | None:
+    if val is None:
+        return None
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_price_from_offers(item: dict[str, Any]) -> int | None:
+    """Extract price from JSON-LD offers (Schema.org RealEstateListing)."""
+    offers = item.get("offers")
+    if not offers:
+        return None
+    if isinstance(offers, list):
+        offers = offers[0] if offers else {}
+    for key in ("price", "lowPrice", "highPrice"):
+        val = offers.get(key)
+        if val:
+            try:
+                price = int(float(val))
+                if price > 1000:
+                    return price
+            except (ValueError, TypeError):
+                pass
+    return None
 
 
 def _map_schema_type(schema_type: str) -> str | None:

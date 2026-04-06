@@ -12,8 +12,9 @@ from src.db import get_client
 
 logger = logging.getLogger(__name__)
 
-# Thresholds
-MIN_MATCH_SCORE = 0.55  # Record match
+# Thresholds — scores are normalized by max achievable weight,
+# so 0.55 means "55% of available evidence matches".
+MIN_MATCH_SCORE = 0.55  # Record match (on normalized scale)
 HIGH_CONFIDENCE = 0.80  # Auto-merge candidate
 
 # Source priority for canonical selection (higher = preferred)
@@ -49,7 +50,8 @@ def run_deduplicator() -> dict[str, int]:
                 db.table("listings")
                 .select("id, source, neighborhood, address, street, number, "
                         "sale_price, total_area, latitude, longitude, "
-                        "property_type, bedrooms, bathrooms, title, zip_code")
+                        "property_type, bedrooms, bathrooms, title, zip_code, "
+                        "built_area")
                 .eq("is_active", True)
                 .is_("canonical_listing_id", "null")
                 .range(offset, offset + page_size - 1)
@@ -133,68 +135,117 @@ def run_deduplicator() -> dict[str, int]:
     return stats
 
 
+def _clean_tokens(text: str) -> set[str]:
+    """Extract meaningful tokens from a listing title, stripping noise."""
+    import re
+    from src.address import remove_accents
+    # Lowercase, remove accents, strip non-alphanumeric (except spaces)
+    text = re.sub(r"[^\w\s]", " ", remove_accents(text.lower()))
+    tokens = set(text.split())
+    # Remove stopwords AND portal-generic format tokens that cause false positives
+    stop = {
+        "de", "do", "da", "dos", "das", "em", "no", "na", "com", "e", "a", "o",
+        "para", "por", "um", "uma", "venda", "aluguel", "marilia", "sp",
+        "comprar", "alugar", "quartos", "quarto", "banheiros", "banheiro",
+        "vagas", "vaga", "suites", "suite", "m2", "m",
+        "casa", "apartamento", "terreno", "comercial", "sobrado", "kitnet",
+        "imovel", "lote", "area", "chacara", "sitio", "galpao", "sala",
+        "condominio", "residencial", "residencia",
+    }
+    tokens -= stop
+    # Remove pure numbers (area values, room counts)
+    tokens = {t for t in tokens if not t.isdigit()}
+    return tokens
+
+
+def _title_similarity(a: str, b: str) -> float:
+    """Token-based Jaccard similarity between two titles."""
+    if not a or not b:
+        return 0.0
+    tokens_a = _clean_tokens(a)
+    tokens_b = _clean_tokens(b)
+    if len(tokens_a) < 2 or len(tokens_b) < 2:
+        return 0.0
+    intersection = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(intersection) / len(union)
+
+
 def _compare(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
-    """Compare two listings with continuous scoring. Returns (score, method)."""
-    signals: list[tuple[float, str]] = []
+    """Compare two listings with continuous scoring. Returns (score, method).
+
+    Scores are normalized by max achievable weight so that listings with
+    sparse data (no address, no coords) can still be matched when the
+    available signals (price, area, title) strongly agree.
+    """
+    signals: list[tuple[float, float, str]] = []  # (score, weight, method)
 
     # 1. Geographic proximity (weight: 0.25)
     lat_a, lng_a = a.get("latitude"), a.get("longitude")
     lat_b, lng_b = b.get("latitude"), b.get("longitude")
     if lat_a and lng_a and lat_b and lng_b:
         dist = _haversine(float(lat_a), float(lng_a), float(lat_b), float(lng_b))
-        if dist <= 200:
-            # Linear decay: 1.0 at 0m → 0.0 at 200m
-            geo_score = max(0, 1.0 - dist / 200) * 0.25
-            signals.append((geo_score, f"geo_{int(dist)}m"))
+        geo_score = max(0, 1.0 - dist / 200) if dist <= 200 else 0.0
+        signals.append((geo_score, 0.25, f"geo_{int(dist)}m"))
 
-    # 2. Address similarity (weight: 0.25)
+    # 2. Address similarity (weight: 0.20)
     addr_a = a.get("address") or a.get("street") or ""
     addr_b = b.get("address") or b.get("street") or ""
     if addr_a and addr_b:
         sim = address_similarity(addr_a, addr_b)
-        if sim >= 0.3:
-            addr_score = sim * 0.25
-            signals.append((addr_score, f"addr_{sim:.0%}"))
+        signals.append((sim if sim >= 0.3 else 0.0, 0.20, f"addr_{sim:.0%}"))
 
-    # 2b. ZIP code bonus
+    # 2b. ZIP code bonus (weight: 0.05)
     zip_a = a.get("zip_code")
     zip_b = b.get("zip_code")
-    if zip_a and zip_b and zip_a == zip_b:
-        signals.append((0.10, "zip_match"))
+    if zip_a and zip_b:
+        signals.append((1.0 if zip_a == zip_b else 0.0, 0.05, "zip"))
 
     # 3. Price similarity (weight: 0.25)
     price_a = float(a.get("sale_price") or 0)
     price_b = float(b.get("sale_price") or 0)
     if price_a > 0 and price_b > 0:
         diff = abs(price_a - price_b) / max(price_a, price_b)
-        if diff <= 0.20:
-            # Linear decay: 1.0 at 0% → 0.0 at 20%
-            price_score = (1.0 - diff / 0.20) * 0.25
-            signals.append((price_score, f"price_{diff:.0%}"))
+        price_score = max(0, 1.0 - diff / 0.20) if diff <= 0.20 else 0.0
+        signals.append((price_score, 0.25, f"price_{diff:.0%}"))
 
     # 4. Area similarity (weight: 0.15)
     area_a = float(a.get("total_area") or 0)
     area_b = float(b.get("total_area") or 0)
     if area_a > 0 and area_b > 0:
         diff = abs(area_a - area_b) / max(area_a, area_b)
-        if diff <= 0.15:
-            area_score = (1.0 - diff / 0.15) * 0.15
-            signals.append((area_score, f"area_{diff:.0%}"))
+        area_score = max(0, 1.0 - diff / 0.15) if diff <= 0.15 else 0.0
+        signals.append((area_score, 0.15, f"area_{diff:.0%}"))
 
-    # 5. Bedrooms/bathrooms match (weight: 0.10)
+    # 5. Bedrooms/bathrooms match (weight: 0.05 each)
     bed_a = a.get("bedrooms")
     bed_b = b.get("bedrooms")
+    if bed_a is not None and bed_b is not None:
+        signals.append((1.0 if bed_a == bed_b else 0.0, 0.05, "bed"))
     bath_a = a.get("bathrooms")
     bath_b = b.get("bathrooms")
-    if bed_a is not None and bed_b is not None:
-        if bed_a == bed_b:
-            signals.append((0.05, "bed_match"))
-        if bath_a is not None and bath_b is not None and bath_a == bath_b:
-            signals.append((0.05, "bath_match"))
+    if bath_a is not None and bath_b is not None:
+        signals.append((1.0 if bath_a == bath_b else 0.0, 0.05, "bath"))
 
-    score = sum(s for s, _ in signals)
-    methods = "+".join(m for _, m in signals)
-    return score, methods or "no_match"
+    # 6. Title similarity (weight: 0.15) — critical when address/geo are missing
+    title_a = a.get("title") or ""
+    title_b = b.get("title") or ""
+    if title_a and title_b:
+        tsim = _title_similarity(title_a, title_b)
+        signals.append((tsim if tsim >= 0.25 else 0.0, 0.15, f"title_{tsim:.0%}"))
+
+    if not signals:
+        return 0.0, "no_signals"
+
+    # Normalize: score = weighted_sum / total_weight_of_available_signals
+    total_weight = sum(w for _, w, _ in signals)
+    if total_weight == 0:
+        return 0.0, "no_weight"
+    raw_score = sum(s * w for s, w, _ in signals)
+    normalized = raw_score / total_weight
+
+    methods = "+".join(m for s, _, m in signals if s > 0)
+    return round(normalized, 3), methods or "no_match"
 
 
 def _set_canonical_listings(db: Any, match_pairs: list[dict]) -> int:
