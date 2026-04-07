@@ -93,9 +93,20 @@ async def run_collectors(names: Optional[List[str]] = None) -> None:
     apis = [(n, c) for n, c in valid if n in ("uniao", "toca")]
     scrapers = [(n, c) for n, c in valid if n not in ("uniao", "toca")]
 
-    # Run APIs sequentially (fast, <30s total)
+    # Run APIs sequentially — await directly since we're already in async context
     for name, cls in apis:
-        _run_collector_sync(name, cls)
+        logger.info(f"=== Starting collector: {name} ===")
+        collector = cls()
+        try:
+            stats = await collector.run()
+            logger.info(
+                f"=== {name} done: "
+                f"{stats['processed']} processed, "
+                f"{stats['created']} created, "
+                f"{stats['failed']} failed ==="
+            )
+        except Exception:
+            logger.exception(f"=== {name} FAILED ===")
 
     # Run scrapers in parallel threads (each takes 30-60s with delays)
     if scrapers:

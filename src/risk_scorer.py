@@ -122,7 +122,7 @@ def run_risk_scorer(limit: int = 30) -> dict[str, int]:
 
             except Exception:
                 stats["failed"] += 1
-                logger.debug(f"[risk] Failed for #{opp['id']}", exc_info=True)
+                logger.warning(f"[risk] Failed for #{opp['id']}", exc_info=True)
 
         logger.info(
             f"[risk] Done: {stats['assessed']} assessed, "

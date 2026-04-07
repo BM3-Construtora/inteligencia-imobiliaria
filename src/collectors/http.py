@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Referer": "https://www.google.com.br/",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "cross-site",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 MAX_RETRIES = 3
@@ -22,7 +29,9 @@ _local = threading.local()
 
 def get_scraper() -> cloudscraper.CloudScraper:
     if not hasattr(_local, "scraper"):
-        _local.scraper = cloudscraper.create_scraper()
+        _local.scraper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False},
+        )
         _local.scraper.headers.update(DEFAULT_HEADERS)
     return _local.scraper
 

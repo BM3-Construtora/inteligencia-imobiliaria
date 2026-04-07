@@ -51,7 +51,7 @@ def _generate(prompt: str, max_tokens: int = 1000) -> Optional[str]:
             return text.strip() if text else None
         return None
     except Exception:
-        logger.debug("[llm] Gemini call failed", exc_info=True)
+        logger.warning("[llm] Gemini call failed", exc_info=True)
         return None
 
 

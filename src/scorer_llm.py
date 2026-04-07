@@ -96,7 +96,7 @@ def run_llm_scorer(limit: int = 20) -> dict[str, int]:
 
             except Exception:
                 stats["failed"] += 1
-                logger.debug(f"[scorer_llm] Failed for #{opp['id']}", exc_info=True)
+                logger.warning(f"[scorer_llm] Failed for #{opp['id']}", exc_info=True)
 
         logger.info(
             f"[scorer_llm] Done: {stats['scored']} scored, {stats['failed']} failed"

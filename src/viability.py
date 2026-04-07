@@ -192,7 +192,7 @@ def simulate_project(
     investimento_mensal = investimento_total / meses_construcao
     receita_mensal = vgv / meses_venda
 
-    fluxo = []
+    fluxo = [0.0]  # t=0
     for m in range(1, payback_meses + 1):
         if m <= meses_construcao:
             fluxo.append(-investimento_mensal)
@@ -268,11 +268,16 @@ def _calc_irr(cashflows: list[float], guess: float = 0.05, max_iter: int = 100) 
     """Calculate Internal Rate of Return using Newton's method."""
     rate = guess
     for _ in range(max_iter):
-        npv = sum(cf / (1 + rate) ** i for i, cf in enumerate(cashflows))
-        dnpv = sum(-i * cf / (1 + rate) ** (i + 1) for i, cf in enumerate(cashflows))
+        try:
+            npv = sum(cf / (1 + rate) ** i for i, cf in enumerate(cashflows))
+            dnpv = sum(-i * cf / (1 + rate) ** (i + 1) for i, cf in enumerate(cashflows))
+        except (OverflowError, ZeroDivisionError):
+            return 0.0
         if abs(dnpv) < 1e-10:
             break
         new_rate = rate - npv / dnpv
+        if new_rate <= -1.0 or new_rate > 10.0:
+            return 0.0
         if abs(new_rate - rate) < 1e-8:
             return new_rate
         rate = new_rate
@@ -352,62 +357,65 @@ def run_viability(
             best_result = None
             best_margin = -999
 
-            for faixa_key in MCMV_FAIXAS:
-                study = simulate_project(
-                    land_price=float(listing.get("sale_price") or 0),
-                    land_area=float(listing.get("total_area") or 0),
-                    faixa_key=faixa_key,
-                    sinapi_cost=sinapi_cost,
-                    neighborhood_avg_price_m2=neigh_prices.get(listing.get("neighborhood", "")),
-                )
-                if not study:
-                    continue
+            try:
+                for faixa_key in MCMV_FAIXAS:
+                    study = simulate_project(
+                        land_price=float(listing.get("sale_price") or 0),
+                        land_area=float(listing.get("total_area") or 0),
+                        faixa_key=faixa_key,
+                        sinapi_cost=sinapi_cost,
+                        neighborhood_avg_price_m2=neigh_prices.get(listing.get("neighborhood", "")),
+                    )
+                    if not study:
+                        continue
 
-                # Sensitivity analysis
-                study_opt = simulate_project(
-                    float(listing.get("sale_price") or 0),
-                    float(listing.get("total_area") or 0),
-                    faixa_key, sinapi_cost * 0.90,
-                    neigh_prices.get(listing.get("neighborhood", "")),
-                )
-                study_pes = simulate_project(
-                    float(listing.get("sale_price") or 0),
-                    float(listing.get("total_area") or 0),
-                    faixa_key, sinapi_cost * 1.10,
-                    neigh_prices.get(listing.get("neighborhood", "")),
-                )
+                    # Sensitivity analysis
+                    study_opt = simulate_project(
+                        float(listing.get("sale_price") or 0),
+                        float(listing.get("total_area") or 0),
+                        faixa_key, sinapi_cost * 0.90,
+                        neigh_prices.get(listing.get("neighborhood", "")),
+                    )
+                    study_pes = simulate_project(
+                        float(listing.get("sale_price") or 0),
+                        float(listing.get("total_area") or 0),
+                        faixa_key, sinapi_cost * 1.10,
+                        neigh_prices.get(listing.get("neighborhood", "")),
+                    )
 
-                if study_opt:
-                    study["outputs"]["margem_otimista_pct"] = study_opt["outputs"]["margem_liquida_pct"]
-                if study_pes:
-                    study["outputs"]["margem_pessimista_pct"] = study_pes["outputs"]["margem_liquida_pct"]
+                    if study_opt:
+                        study["outputs"]["margem_otimista_pct"] = study_opt["outputs"]["margem_liquida_pct"]
+                    if study_pes:
+                        study["outputs"]["margem_pessimista_pct"] = study_pes["outputs"]["margem_liquida_pct"]
 
-                stats["scenarios"] += 1
-                if study["is_viable"]:
-                    stats["viable"] += 1
-                else:
-                    stats["not_viable"] += 1
+                    stats["scenarios"] += 1
+                    if study["is_viable"]:
+                        stats["viable"] += 1
+                    else:
+                        stats["not_viable"] += 1
 
-                margin = study["outputs"]["margem_liquida_pct"]
-                if margin > best_margin:
-                    best_margin = margin
-                    best_result = study
+                    margin = study["outputs"]["margem_liquida_pct"]
+                    if margin > best_margin:
+                        best_margin = margin
+                        best_result = study
 
-                db.table("viability_studies").insert({
-                    "listing_id": listing["id"],
-                    "scenario": study["scenario"],
-                    "inputs": study["inputs"],
-                    "outputs": study["outputs"],
-                    "is_viable": study["is_viable"],
-                }).execute()
+                    db.table("viability_studies").insert({
+                        "listing_id": listing["id"],
+                        "scenario": study["scenario"],
+                        "inputs": study["inputs"],
+                        "outputs": study["outputs"],
+                        "is_viable": study["is_viable"],
+                    }).execute()
 
-            if best_result:
-                logger.info(
-                    f"[viability] #{listing['id']} {listing.get('neighborhood', '?')}: "
-                    f"melhor={best_result['scenario']} | "
-                    f"margem={best_margin:.1f}% | "
-                    f"{'GO' if best_result['is_viable'] else 'NO-GO'}"
-                )
+                if best_result:
+                    logger.info(
+                        f"[viability] #{listing['id']} {listing.get('neighborhood', '?')}: "
+                        f"melhor={best_result['scenario']} | "
+                        f"margem={best_margin:.1f}% | "
+                        f"{'GO' if best_result['is_viable'] else 'NO-GO'}"
+                    )
+            except Exception:
+                logger.warning(f"[viability] Error on listing #{listing.get('id')}", exc_info=True)
 
         logger.info(
             f"[viability] Done: {stats['analyzed']} analyzed, "
