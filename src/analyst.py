@@ -300,8 +300,8 @@ def _update_all_neighborhoods(db: Any) -> int:
 
         total = d["total"]
         removed = d["removed_30d"]
-        absorption = round(removed / total * 100, 2) if total > 0 and removed > 0 else None
-        months_inv = round(total / removed, 1) if removed > 0 else None
+        absorption = min(round(removed / total * 100, 2), 999.99) if total > 0 and removed > 0 else None
+        months_inv = min(round(total / removed, 1), 999.9) if removed > 0 else None
 
         row: dict[str, Any] = {
             "name": name,
