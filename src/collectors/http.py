@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import logging
@@ -33,6 +34,9 @@ def get_scraper() -> cloudscraper.CloudScraper:
             browser={"browser": "chrome", "platform": "windows", "mobile": False},
         )
         _local.scraper.headers.update(DEFAULT_HEADERS)
+        proxy_url = os.getenv("RESIDENTIAL_PROXY_URL")
+        if proxy_url:
+            _local.scraper.proxies = {"http": proxy_url, "https": proxy_url}
     return _local.scraper
 
 

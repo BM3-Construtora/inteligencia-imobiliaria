@@ -255,6 +255,16 @@ def _compare(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
     raw_score = sum(s * w for s, w, _ in signals)
     normalized = raw_score / total_weight
 
+    # Guard: cap score when strong signals are missing.
+    # Strong signals = geo, address, price, area (weight >= 0.15).
+    # Without at least 2 strong positive signals, cap at 0.75 to avoid
+    # false positives from bed+bath+title alone.
+    strong_positive = sum(
+        1 for s, w, _ in signals if w >= 0.15 and s >= 0.5
+    )
+    if strong_positive < 2 and normalized >= HIGH_CONFIDENCE:
+        normalized = HIGH_CONFIDENCE - 0.01  # 0.79 — just below auto-merge
+
     methods = "+".join(m for s, _, m in signals if s > 0)
     return round(normalized, 3), methods or "no_match"
 
