@@ -183,98 +183,119 @@ def _title_similarity(a: str, b: str) -> float:
 
 
 def _compare(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
-    """Compare two listings with continuous scoring. Returns (score, method).
+    """Compare two listings. Returns (score, method).
 
-    Scores are normalized by max achievable weight so that listings with
-    sparse data (no address, no coords) can still be matched when the
-    available signals (price, area, title) strongly agree.
+    Strategy:
+    - source_id match = definitive (vivareal↔zapimoveis share IDs)
+    - source_id MISMATCH between vivareal↔zapimoveis = definitive NOT a match
+    - For other pairs: require address/geo match OR (price AND area) match.
+      Title/bed/bath alone are NEVER enough — too many similar listings per neighborhood.
     """
-    signals: list[tuple[float, float, str]] = []  # (score, weight, method)
-
-    # 0. Source ID match — definitive for portals sharing IDs (vivareal↔zapimoveis)
+    src_a = a.get("source", "")
+    src_b = b.get("source", "")
     sid_a = a.get("source_id") or ""
     sid_b = b.get("source_id") or ""
-    if sid_a and sid_b and sid_a == sid_b:
-        return 1.0, "source_id_match"
 
-    # 1. Geographic proximity (weight: 0.25)
+    # --- Definitive: source_id match/mismatch ---
+    if sid_a and sid_b:
+        if sid_a == sid_b:
+            return 1.0, "source_id_match"
+        # Same portal family with different IDs = different listings
+        shared_id_portals = {"vivareal", "zapimoveis"}
+        if src_a in shared_id_portals and src_b in shared_id_portals:
+            return 0.0, "source_id_mismatch"
+
+    # --- Collect identity signals (things that identify a SPECIFIC property) ---
+    methods: list[str] = []
+
+    # 1. Geographic proximity
+    geo_match = False
     lat_a, lng_a = a.get("latitude"), a.get("longitude")
     lat_b, lng_b = b.get("latitude"), b.get("longitude")
     if lat_a and lng_a and lat_b and lng_b:
         dist = _haversine(float(lat_a), float(lng_a), float(lat_b), float(lng_b))
-        geo_score = max(0, 1.0 - dist / 200) if dist <= 200 else 0.0
-        signals.append((geo_score, 0.25, f"geo_{int(dist)}m"))
+        if dist <= 50:
+            geo_match = True
+            methods.append(f"geo_{int(dist)}m")
 
-    # 2. Address similarity (weight: 0.20)
-    # Different addresses are strong evidence AGAINST a match.
+    # 2. Address match
+    addr_match = False
     addr_a = a.get("address") or a.get("street") or ""
     addr_b = b.get("address") or b.get("street") or ""
     if addr_a and addr_b:
         sim = address_similarity(addr_a, addr_b)
-        # Always include — low similarity actively pulls score down
-        signals.append((sim if sim >= 0.3 else 0.0, 0.20, f"addr_{sim:.0%}"))
+        if sim >= 0.70:
+            addr_match = True
+            methods.append(f"addr_{sim:.0%}")
 
-    # 2b. ZIP code bonus (weight: 0.05)
-    zip_a = a.get("zip_code")
-    zip_b = b.get("zip_code")
-    if zip_a and zip_b:
-        signals.append((1.0 if zip_a == zip_b else 0.0, 0.05, "zip"))
-
-    # 3. Price similarity (weight: 0.25)
+    # 3. Price similarity
+    price_match = False
     price_a = float(a.get("sale_price") or 0)
     price_b = float(b.get("sale_price") or 0)
+    price_diff = None
     if price_a > 0 and price_b > 0:
-        diff = abs(price_a - price_b) / max(price_a, price_b)
-        price_score = max(0, 1.0 - diff / 0.20) if diff <= 0.20 else 0.0
-        signals.append((price_score, 0.25, f"price_{diff:.0%}"))
+        price_diff = abs(price_a - price_b) / max(price_a, price_b)
+        if price_diff <= 0.10:
+            price_match = True
+            methods.append(f"price_{price_diff:.0%}")
 
-    # 4. Area similarity (weight: 0.15)
+    # 4. Area similarity
+    area_match = False
     area_a = float(a.get("total_area") or 0)
     area_b = float(b.get("total_area") or 0)
+    area_diff = None
     if area_a > 0 and area_b > 0:
-        diff = abs(area_a - area_b) / max(area_a, area_b)
-        area_score = max(0, 1.0 - diff / 0.15) if diff <= 0.15 else 0.0
-        signals.append((area_score, 0.15, f"area_{diff:.0%}"))
+        area_diff = abs(area_a - area_b) / max(area_a, area_b)
+        if area_diff <= 0.10:
+            area_match = True
+            methods.append(f"area_{area_diff:.0%}")
 
-    # 5. Bedrooms/bathrooms match (weight: 0.05 each)
-    bed_a = a.get("bedrooms")
-    bed_b = b.get("bedrooms")
-    if bed_a is not None and bed_b is not None:
-        signals.append((1.0 if bed_a == bed_b else 0.0, 0.05, "bed"))
-    bath_a = a.get("bathrooms")
-    bath_b = b.get("bathrooms")
-    if bath_a is not None and bath_b is not None:
-        signals.append((1.0 if bath_a == bath_b else 0.0, 0.05, "bath"))
+    # --- Bed/bath signals (used in decision logic below) ---
+    bed_a, bed_b = a.get("bedrooms"), b.get("bedrooms")
+    bath_a, bath_b = a.get("bathrooms"), b.get("bathrooms")
+    bed_match = bed_a is not None and bed_b is not None and bed_a == bed_b
+    bath_match = bath_a is not None and bath_b is not None and bath_a == bath_b
+    bed_mismatch = (bed_a is not None and bed_b is not None and bed_a != bed_b)
+    bath_mismatch = (bath_a is not None and bath_b is not None and bath_a != bath_b)
 
-    # 6. Title similarity (weight: 0.15) — critical when address/geo are missing
-    title_a = a.get("title") or ""
-    title_b = b.get("title") or ""
-    if title_a and title_b:
-        tsim = _title_similarity(title_a, title_b)
-        signals.append((tsim if tsim >= 0.25 else 0.0, 0.15, f"title_{tsim:.0%}"))
+    # --- Decision: require strong cross-domain evidence ---
+    # Same street ≠ same property (many units per street/building).
+    # Need LOCATION + FINANCIAL confirmation. Bed/bath mismatch vetoes weak matches.
+    location_confirmed = addr_match or geo_match
+    financials_confirmed = price_match and area_match
 
-    if not signals:
-        return 0.0, "no_signals"
+    if (bed_mismatch or bath_mismatch) and not (location_confirmed and financials_confirmed):
+        # Different bedroom/bathroom count = almost certainly different property
+        # unless BOTH location AND financials match perfectly
+        return 0.0, "bed_bath_mismatch"
 
-    # Normalize: score = weighted_sum / total_weight_of_available_signals
-    total_weight = sum(w for _, w, _ in signals)
-    if total_weight == 0:
-        return 0.0, "no_weight"
-    raw_score = sum(s * w for s, w, _ in signals)
-    normalized = raw_score / total_weight
+    if location_confirmed and financials_confirmed:
+        score = 0.95
+    elif location_confirmed and price_match and (bed_match or bath_match):
+        # Location + price + bed/bath = strong
+        score = 0.90
+    elif location_confirmed and area_match and (bed_match or bath_match):
+        # Location + area + bed/bath = decent
+        score = 0.88
+    elif financials_confirmed and (bed_match or bath_match):
+        # Price+area match with bed/bath but no location
+        tight = (price_diff if price_diff is not None else 1) <= 0.05 and (area_diff if area_diff is not None else 1) <= 0.05
+        score = 0.85 if tight else 0.82
+    elif geo_match and (bed_match and bath_match):
+        # Geo < 50m with matching bed AND bath
+        score = 0.80
+    else:
+        return 0.0, "insufficient_evidence"
 
-    # Guard: cap score when strong signals are missing.
-    # Strong signals = geo, address, price, area (weight >= 0.15).
-    # Without at least 2 strong positive signals, cap at 0.75 to avoid
-    # false positives from bed+bath+title alone.
-    strong_positive = sum(
-        1 for s, w, _ in signals if w >= 0.15 and s >= 0.5
-    )
-    if strong_positive < 2 and normalized >= HIGH_CONFIDENCE:
-        normalized = HIGH_CONFIDENCE - 0.01  # 0.79 — just below auto-merge
+    # Small bonus for bed/bath match
+    if bed_match:
+        score = min(1.0, score + 0.02)
+        methods.append("bed")
+    if bath_match:
+        score = min(1.0, score + 0.02)
+        methods.append("bath")
 
-    methods = "+".join(m for s, _, m in signals if s > 0)
-    return round(normalized, 3), methods or "no_match"
+    return round(score, 3), "+".join(methods)
 
 
 def _set_canonical_listings(db: Any, match_pairs: list[dict]) -> int:
