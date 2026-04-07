@@ -13,7 +13,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-001")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 _client = None
 
@@ -22,7 +22,7 @@ def _get_client():
     global _client
     if _client is None:
         from google import genai
-        _client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1"})
+        _client = genai.Client(api_key=GEMINI_API_KEY)
     return _client
 
 
