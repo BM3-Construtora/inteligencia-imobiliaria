@@ -8,8 +8,8 @@ interface MarketIndex {
   metadata: Record<string, any>
 }
 
-function Signal({ label, value, good, bad, unit }: {
-  label: string; value: number | null; good: string; bad: string; unit?: string
+function Signal({ label, value, good, unit }: {
+  label: string; value: number | null; good: string; unit?: string
 }) {
   if (value == null) return (
     <div className="bg-slate-700/50 rounded-lg p-3">
@@ -125,10 +125,10 @@ export function DecisionPanel() {
 
           {/* Metrics grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <Signal label="Absorção (%/mês)" value={n.absorption_rate ?? null} good="high" bad="low" unit="%" />
-            <Signal label="Meses de estoque" value={n.months_of_inventory ?? null} good="low" bad="high" unit=" m" />
-            <Signal label="Novos (30d)" value={n.new_last_30d ?? null} good="high" bad="low" />
-            <Signal label="Removidos (30d)" value={n.removed_last_30d ?? null} good="high" bad="low" />
+            <Signal label="Absorção (%/mês)" value={n.absorption_rate ?? null} good="high" unit="%" />
+            <Signal label="Meses de estoque" value={n.months_of_inventory ?? null} good="low" unit=" m" />
+            <Signal label="Novos (30d)" value={n.new_last_30d ?? null} good="high" />
+            <Signal label="Removidos (30d)" value={n.removed_last_30d ?? null} good="high" />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">

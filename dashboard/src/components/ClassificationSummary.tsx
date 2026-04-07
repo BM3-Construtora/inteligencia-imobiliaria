@@ -68,8 +68,8 @@ export function ClassificationSummary({ tiers, loading }: Props) {
               borderRadius: 8,
               color: '#e2e8f0',
             }}
-            formatter={(value: number) => [
-              value.toLocaleString('pt-BR'),
+            formatter={(value) => [
+              typeof value === 'number' ? value.toLocaleString('pt-BR') : String(value ?? ''),
               'Imoveis',
             ]}
           />

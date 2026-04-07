@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useFilters, type Filters } from '../contexts/FilterContext'
-import type { Listing, Neighborhood } from '../types'
+import type { Neighborhood } from '../types'
 
 function applyFiltersToQuery(query: any, filters: Filters) {
   if (filters.propertyType.length > 0) {
@@ -200,6 +200,14 @@ export function useFilteredNeighborhoods() {
             total_listings_by_tier: n.tiers,
             latitude: n.lats.length > 0 ? n.lats.reduce((a, b) => a + b, 0) / n.lats.length : null,
             longitude: n.lngs.length > 0 ? n.lngs.reduce((a, b) => a + b, 0) / n.lngs.length : null,
+            avg_days_on_market: null,
+            avg_risk_score: null,
+            risk_breakdown: null,
+            absorption_rate: null,
+            months_of_inventory: null,
+            removed_last_30d: null,
+            new_last_30d: null,
+            market_heat_score: null,
           }))
           .sort((a, b) => b.total_listings - a.total_listings)
 

@@ -100,7 +100,7 @@ export function PriceTrend() {
 
       {/* Neighborhood selector */}
       <div className="flex flex-wrap gap-1 mb-4 max-h-16 overflow-y-auto">
-        {neighborhoods.map((n, i) => (
+        {neighborhoods.map((n) => (
           <button
             key={n}
             onClick={() => toggleNeighborhood(n)}
@@ -137,7 +137,7 @@ export function PriceTrend() {
             />
             <Tooltip
               contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }}
-              formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR')}/m²`, '']}
+              formatter={(value) => [`R$ ${typeof value === 'number' ? value.toLocaleString('pt-BR') : String(value ?? '')}/m²`, '']}
             />
             <Legend />
             {selectedNeighborhoods.map((n, i) => (
