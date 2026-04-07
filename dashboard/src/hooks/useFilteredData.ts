@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useFilters, type Filters } from '../contexts/FilterContext'
 import type { Neighborhood } from '../types'
 
@@ -60,14 +60,19 @@ export function useFilteredStats() {
   useEffect(() => {
     setLoading(true)
     async function fetch() {
-      // Fetch filtered listings
-      let query = supabase
-        .from('listings')
-        .select('source, property_type, market_tier, price_per_m2')
-        .eq('is_active', true)
-
-      query = applyFiltersToQuery(query, filters)
-      const { data: rows } = await query
+      // Fetch ALL filtered listings with pagination (Supabase default limit = 1000)
+      const rows = await fetchAllRows<{
+        source: string
+        property_type: string
+        market_tier: string | null
+        price_per_m2: number | null
+      }>(
+        (from) => applyFiltersToQuery(
+          from.select('source, property_type, market_tier, price_per_m2').eq('is_active', true),
+          filters,
+        ),
+        'listings',
+      )
 
       const sources: Record<string, number> = {}
       const tiers: Record<string, number> = {}
@@ -75,7 +80,7 @@ export function useFilteredStats() {
       let houseCount = 0
       const landPrices: number[] = []
 
-      rows?.forEach(r => {
+      rows.forEach(r => {
         sources[r.source] = (sources[r.source] || 0) + 1
         if (r.market_tier) tiers[r.market_tier] = (tiers[r.market_tier] || 0) + 1
         if (r.property_type === 'land') {
@@ -89,13 +94,13 @@ export function useFilteredStats() {
         ? landPrices.reduce((a, b) => a + b, 0) / landPrices.length
         : 0
 
-      // Opportunities count (always unfiltered since they're only land)
+      // Opportunities count
       const { count: oppCount } = await supabase
         .from('opportunities')
         .select('id', { count: 'exact', head: true })
 
       setData({
-        totalListings: rows?.length || 0,
+        totalListings: rows.length,
         totalLand: landCount,
         totalHouses: houseCount,
         totalOpportunities: oppCount || 0,
@@ -130,14 +135,23 @@ export function useFilteredNeighborhoods() {
     setLoading(true)
     async function fetch() {
       if (hasListingFilters) {
-        // Need to aggregate from filtered listings
-        let query = supabase
-          .from('listings')
-          .select('neighborhood, property_type, market_tier, price_per_m2, latitude, longitude, sale_price, total_area')
-          .eq('is_active', true)
-
-        query = applyFiltersToQuery(query, filters)
-        const { data: rows } = await query
+        // Need to aggregate from filtered listings (paginated)
+        const rows = await fetchAllRows<{
+          neighborhood: string | null
+          property_type: string
+          market_tier: string | null
+          price_per_m2: number | null
+          latitude: number | null
+          longitude: number | null
+          sale_price: number | null
+          total_area: number | null
+        }>(
+          (from) => applyFiltersToQuery(
+            from.select('neighborhood, property_type, market_tier, price_per_m2, latitude, longitude, sale_price, total_area').eq('is_active', true),
+            filters,
+          ),
+          'listings',
+        )
 
         // Aggregate by neighborhood
         const neighMap = new Map<string, {

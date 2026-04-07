@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import type { Opportunity, MarketSnapshot, Neighborhood } from '../types'
 
 export function useStats() {
@@ -15,31 +15,30 @@ export function useStats() {
 
   useEffect(() => {
     async function fetch() {
+      // Use exact counts (no row limit issue) + paginated fetches for aggregation
       const [listings, land, opportunities] = await Promise.all([
         supabase.from('listings').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('listings').select('id', { count: 'exact', head: true }).eq('is_active', true).eq('property_type', 'land'),
         supabase.from('opportunities').select('id', { count: 'exact', head: true }),
       ])
 
-      // Sources
-      const sourceData = await supabase.from('listings').select('source').eq('is_active', true)
+      // Fetch all rows for aggregation (paginated to avoid 1000 limit)
+      const allListings = await fetchAllRows<{ source: string; property_type: string; price_per_m2: number | null }>(
+        (from) => from.select('source, property_type, price_per_m2').eq('is_active', true),
+        'listings',
+      )
+
       const sources: Record<string, number> = {}
-      sourceData.data?.forEach(r => { sources[r.source] = (sources[r.source] || 0) + 1 })
-
-      // Types
-      const typeData = await supabase.from('listings').select('property_type').eq('is_active', true)
       const types: Record<string, number> = {}
-      typeData.data?.forEach(r => { types[r.property_type] = (types[r.property_type] || 0) + 1 })
+      const prices: number[] = []
 
-      // Avg price/m2 land
-      const landPrices = await supabase
-        .from('listings')
-        .select('price_per_m2')
-        .eq('is_active', true)
-        .eq('property_type', 'land')
-        .not('price_per_m2', 'is', null)
-      const prices = landPrices.data?.map(r => r.price_per_m2).filter(Boolean) || []
-      const avgPm2 = prices.length > 0 ? prices.reduce((a: number, b: number) => a + b, 0) / prices.length : 0
+      allListings.forEach(r => {
+        sources[r.source] = (sources[r.source] || 0) + 1
+        types[r.property_type] = (types[r.property_type] || 0) + 1
+        if (r.property_type === 'land' && r.price_per_m2) prices.push(r.price_per_m2)
+      })
+
+      const avgPm2 = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
 
       setStats({
         totalListings: listings.count || 0,
@@ -117,17 +116,18 @@ export function useSoldEstimates() {
 
   useEffect(() => {
     async function fetch() {
-      const { data: rows } = await supabase
-        .from('sold_estimates')
-        .select('neighborhood')
+      const rows = await fetchAllRows<{ neighborhood: string | null }>(
+        (from) => from.select('neighborhood'),
+        'sold_estimates',
+      )
 
       const byNeighborhood: Record<string, number> = {}
-      rows?.forEach(r => {
+      rows.forEach(r => {
         if (r.neighborhood) {
           byNeighborhood[r.neighborhood] = (byNeighborhood[r.neighborhood] || 0) + 1
         }
       })
-      setData({ total: rows?.length || 0, byNeighborhood })
+      setData({ total: rows.length, byNeighborhood })
       setLoading(false)
     }
     fetch()
@@ -208,14 +208,13 @@ export function useClassificationStats() {
 
   useEffect(() => {
     async function fetch() {
-      const { data } = await supabase
-        .from('listings')
-        .select('market_tier')
-        .eq('is_active', true)
-        .not('market_tier', 'is', null)
+      const rows = await fetchAllRows<{ market_tier: string }>(
+        (from) => from.select('market_tier').eq('is_active', true).not('market_tier', 'is', null),
+        'listings',
+      )
 
       const counts: Record<string, number> = {}
-      data?.forEach(r => {
+      rows.forEach(r => {
         counts[r.market_tier] = (counts[r.market_tier] || 0) + 1
       })
       setTiers(counts)
