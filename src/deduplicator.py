@@ -48,7 +48,7 @@ def run_deduplicator() -> dict[str, int]:
         while True:
             result = (
                 db.table("listings")
-                .select("id, source, neighborhood, address, street, number, "
+                .select("id, source, source_id, neighborhood, address, street, number, "
                         "sale_price, total_area, latitude, longitude, "
                         "property_type, bedrooms, bathrooms, title, zip_code, "
                         "built_area")
@@ -191,6 +191,12 @@ def _compare(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
     """
     signals: list[tuple[float, float, str]] = []  # (score, weight, method)
 
+    # 0. Source ID match — definitive for portals sharing IDs (vivareal↔zapimoveis)
+    sid_a = a.get("source_id") or ""
+    sid_b = b.get("source_id") or ""
+    if sid_a and sid_b and sid_a == sid_b:
+        return 1.0, "source_id_match"
+
     # 1. Geographic proximity (weight: 0.25)
     lat_a, lng_a = a.get("latitude"), a.get("longitude")
     lat_b, lng_b = b.get("latitude"), b.get("longitude")
@@ -200,10 +206,12 @@ def _compare(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
         signals.append((geo_score, 0.25, f"geo_{int(dist)}m"))
 
     # 2. Address similarity (weight: 0.20)
+    # Different addresses are strong evidence AGAINST a match.
     addr_a = a.get("address") or a.get("street") or ""
     addr_b = b.get("address") or b.get("street") or ""
     if addr_a and addr_b:
         sim = address_similarity(addr_a, addr_b)
+        # Always include — low similarity actively pulls score down
         signals.append((sim if sim >= 0.3 else 0.0, 0.20, f"addr_{sim:.0%}"))
 
     # 2b. ZIP code bonus (weight: 0.05)
