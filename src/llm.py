@@ -26,21 +26,33 @@ def _get_client():
     return _client
 
 
-def _generate(prompt: str, max_tokens: int = 1000) -> Optional[str]:
-    """Call Gemini and return the text response."""
+def _generate(prompt: str, max_tokens: int = 1000, thinking: bool = False) -> Optional[str]:
+    """Call Gemini and return the text response.
+
+    `thinking=False` (default) disables Gemini 2.5 reasoning tokens — big cost cut for
+    structured-output batch tasks. Set True only when answer quality needs reasoning.
+    """
     if not GEMINI_API_KEY:
         return None
     try:
         from google.genai import types
 
         client = _get_client()
+        cfg_kwargs: dict[str, Any] = {
+            "max_output_tokens": max_tokens,
+            "temperature": 0.2,
+        }
+        if not thinking:
+            try:
+                cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+            except Exception:
+                # SDK older than thinking support — ignore silently
+                pass
+
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.2,
-            ),
+            config=types.GenerateContentConfig(**cfg_kwargs),
         )
         # Extract text — try .text first, then parts
         if response.text:
@@ -115,7 +127,7 @@ Retorne APENAS um JSON válido com estes campos:
 Se não souber o valor, use null. Se a descrição não tiver info útil, retorne {{}}.
 """
 
-    text = _generate(prompt, max_tokens=2000)
+    text = _generate(prompt, max_tokens=800)
     return _parse_json(text)
 
 
@@ -134,7 +146,7 @@ def batch_normalize_neighborhoods(names: list[str]) -> dict[str, str]:
         f"Bairros:\n{names_list}"
     )
 
-    text = _generate(prompt, max_tokens=2000)
+    text = _generate(prompt, max_tokens=1500)
     result = _parse_json(text)
     return result if isinstance(result, dict) else {}
 
@@ -153,7 +165,7 @@ Score numérico: {numeric_score:.0f}/100
 Dê uma nota de 0 a 10 para potencial de investimento e justifique em 1 frase curta.
 Retorne JSON: {{"nota": N, "justificativa": "..."}}"""
 
-    text = _generate(prompt, max_tokens=2000)
+    text = _generate(prompt, max_tokens=200)
     return _parse_json(text)
 
 
@@ -168,7 +180,7 @@ def assess_risk(listing_data: dict[str, Any]) -> Optional[dict[str, Any]]:
         f"{{\"zoneamento\":N,\"ambiental\":N,\"infra\":N,\"legal\":N,\"mercado\":N,\"resumo\":\"max 10 palavras\"}}"
     )
 
-    text = _generate(prompt, max_tokens=4000)
+    text = _generate(prompt, max_tokens=300)
     result = _parse_json(text)
     if not result:
         return None

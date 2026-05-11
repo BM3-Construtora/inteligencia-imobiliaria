@@ -51,28 +51,43 @@ def run_llm_enricher() -> dict[str, int]:
 
 
 def _normalize_neighborhoods(db: Any, stats: dict[str, int]) -> None:
-    """Normalize all unique neighborhood names using Claude Haiku."""
-    result = db.table("neighborhoods").select("name").execute()
+    """Normalize neighborhood names using Gemini — only ones not yet normalized."""
+    # Skip rows already normalized (migration 017 adds normalized_at)
+    try:
+        result = (
+            db.table("neighborhoods")
+            .select("name")
+            .is_("normalized_at", "null")
+            .execute()
+        )
+    except Exception:
+        # Coluna ainda não existe — fallback pro comportamento antigo
+        logger.warning("[llm_enricher] normalized_at column missing — run migration 017")
+        result = db.table("neighborhoods").select("name").execute()
+
     names = [r["name"] for r in result.data if r["name"]]
 
     if not names:
+        logger.info("[llm_enricher] All neighborhoods already normalized — skip")
         return
 
-    logger.info(f"[llm_enricher] Normalizing {len(names)} neighborhood names")
+    logger.info(f"[llm_enricher] Normalizing {len(names)} pending neighborhood names")
 
-    # Process in batches of 50
+    now_iso = datetime.now(timezone.utc).isoformat()
+
     for i in range(0, len(names), 50):
         batch = names[i:i+50]
         mapping = batch_normalize_neighborhoods(batch)
 
+        if not mapping:
+            continue
+
         for original, normalized in mapping.items():
             if original != normalized and normalized:
-                # Update listings
                 db.table("listings").update({
                     "neighborhood": normalized,
                 }).eq("neighborhood", original).execute()
 
-                # Update neighborhoods table
                 db.table("neighborhoods").update({
                     "name": normalized,
                 }).eq("name", original).execute()
@@ -80,22 +95,45 @@ def _normalize_neighborhoods(db: Any, stats: dict[str, int]) -> None:
                 stats["neighborhoods_normalized"] += 1
                 logger.info(f"[llm_enricher] Neighborhood: '{original}' → '{normalized}'")
 
+        # Marca todos do batch como já processados (mesmo os que não mudaram)
+        try:
+            final_names = [mapping.get(n, n) for n in batch]
+            db.table("neighborhoods").update(
+                {"normalized_at": now_iso}
+            ).in_("name", final_names).execute()
+        except Exception:
+            logger.debug("[llm_enricher] Could not mark normalized_at", exc_info=True)
+
 
 def _extract_attributes(db: Any, stats: dict[str, int]) -> None:
     """Extract structured attributes from land listing descriptions."""
-    # Get land listings with description but no extracted features yet
-    result = (
-        db.table("listings")
-        .select("id, title, description, features, neighborhood")
-        .eq("is_active", True)
-        .eq("property_type", "land")
-        .not_.is_("description", "null")
-        .limit(100)  # Limit to control API costs
-        .execute()
-    )
+    # Busca só land com features ainda não enriquecidos (features null OR sem _source)
+    # PostgREST: `features->>_source` igual ou diferente de 'claude_haiku'
+    try:
+        result = (
+            db.table("listings")
+            .select("id, title, description, features, neighborhood")
+            .eq("is_active", True)
+            .eq("property_type", "land")
+            .not_.is_("description", "null")
+            .or_("features.is.null,features->>_source.neq.claude_haiku")
+            .limit(100)
+            .execute()
+        )
+    except Exception:
+        logger.warning("[llm_enricher] Server-side feature filter failed — fallback")
+        result = (
+            db.table("listings")
+            .select("id, title, description, features, neighborhood")
+            .eq("is_active", True)
+            .eq("property_type", "land")
+            .not_.is_("description", "null")
+            .limit(100)
+            .execute()
+        )
 
     listings = result.data
-    # Filter to only those without enriched features
+    # Segurança: filtra novamente client-side (idempotente)
     to_enrich = [
         l for l in listings
         if not _has_enriched_features(l.get("features"))

@@ -43,6 +43,11 @@ def run_llm_scorer(limit: int = 20) -> dict[str, int]:
         )
 
         for opp in result.data:
+            # Skip se já tem opinião LLM — evita re-pontuar a cada pipeline run
+            bd_existing = opp.get("score_breakdown") or {}
+            if isinstance(bd_existing, dict) and bd_existing.get("llm_nota") is not None:
+                continue
+
             listing = opp.get("listing")
             if isinstance(listing, list):
                 listing = listing[0] if listing else None

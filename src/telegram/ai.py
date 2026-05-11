@@ -45,7 +45,7 @@ PERGUNTA DO USUARIO:
 
 Responda de forma direta e util:"""
 
-    response = _generate(prompt, max_tokens=2000)
+    response = _generate(prompt, max_tokens=1200, thinking=True)
 
     if not response:
         return "Desculpe, nao consegui gerar uma resposta. Tente novamente."

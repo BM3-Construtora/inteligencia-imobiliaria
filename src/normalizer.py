@@ -632,8 +632,19 @@ def _detect_price_change(
         return
     if old_price == new_price:
         return
+    if old_price <= 0:
+        return
 
     change_pct = round(((new_price - old_price) / old_price) * 100, 2)
+
+    # Absurd deltas (>2000% jump or <-95% crash) indicate bad data, not real edits.
+    # Skip recording — quarantine path will catch the underlying outlier.
+    if change_pct > 2000 or change_pct < -95:
+        logger.warning(
+            f"[normalizer] Skipped implausible price change on listing {old['id']}: "
+            f"{old_price} → {new_price} ({change_pct:+.1f}%)"
+        )
+        return
 
     record: dict[str, Any] = {
         "listing_id": old["id"],
