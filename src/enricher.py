@@ -1,9 +1,13 @@
-"""Enricher — geocodes listings without coordinates using Nominatim (OSM)."""
+"""Enricher — geocodes listings with cache-first strategy + Nominatim fallback."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
+import os
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -15,14 +19,26 @@ logger = logging.getLogger(__name__)
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_HEADERS = {"User-Agent": "MariliaBot/1.0 (inteligencia-imobiliaria)"}
-BATCH_SIZE = 50
-REQUEST_DELAY = 1.1  # Nominatim requires max 1 req/sec
+REQUEST_DELAY = 1.1  # Nominatim: max 1 req/sec
+MARILIA_LAT = -22.21
+MARILIA_LNG = -49.95
+MAX_DISTANCE_KM = 50.0
+VIEWBOX = "-50.0,-22.4,-49.8,-22.1"
+NOISE_VALUES = {"endereço indisponível", "endereco indisponivel", "não informado",
+                "nao informado", "0", "-", "", "marília", "marilia"}
+MAX_ATTEMPTS = 3
+BACKOFF = [2, 4, 8]
+TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
 
 def run_enricher() -> dict[str, int]:
-    """Geocode listings that have address but no coordinates."""
     db = get_client()
-    stats = {"processed": 0, "geocoded": 0, "failed": 0, "skipped": 0}
+    max_items = int(os.getenv("ENRICHER_MAX_ITEMS", "5000"))
+    stats = {
+        "processed": 0, "geocoded": 0, "failed": 0, "skipped": 0,
+        "cache_hits": 0, "cache_misses": 0,
+        "precise_matches": 0, "neighborhood_matches": 0, "city_fallback": 0,
+    }
 
     run_result = (
         db.table("agent_runs")
@@ -32,28 +48,9 @@ def run_enricher() -> dict[str, int]:
     run_id = run_result.data[0]["id"] if run_result.data else None
 
     try:
-        # Fetch listings without coordinates (paginate to bypass 1000 limit)
-        listings: list[dict] = []
-        page_size = 1000
-        offset = 0
-        while True:
-            result = (
-                db.table("listings")
-                .select("id, address, street, neighborhood, city, state, zip_code")
-                .eq("is_active", True)
-                .is_("latitude", "null")
-                .range(offset, offset + page_size - 1)
-                .execute()
-            )
-            if not result.data:
-                break
-            listings.extend(result.data)
-            if len(result.data) < page_size:
-                break
-            offset += page_size
-        logger.info(f"[enricher] Found {len(listings)} listings without coordinates")
+        listings = _fetch_listings(db, max_items)
+        logger.info(f"[enricher] Found {len(listings)} listings without coordinates (cap={max_items})")
 
-        # Filter to only those with enough address info
         to_geocode = [
             l for l in listings
             if l.get("address") or l.get("street") or l.get("neighborhood")
@@ -62,39 +59,43 @@ def run_enricher() -> dict[str, int]:
 
         for listing in to_geocode:
             stats["processed"] += 1
-            query = _build_query(listing)
+            candidates = _build_candidates(listing)
 
-            if not query:
+            if not candidates:
                 stats["skipped"] += 1
                 continue
 
-            coords = _geocode(query)
+            result = _geocode_with_candidates(db, candidates, stats)
 
-            if coords:
-                lat, lng = coords
+            if result:
+                lat, lng, tier = result
                 db.table("listings").update({
                     "latitude": lat,
                     "longitude": lng,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("id", listing["id"]).execute()
                 stats["geocoded"] += 1
-                logger.debug(
-                    f"[enricher] Geocoded #{listing['id']}: {query} → {lat},{lng}"
-                )
+                stats[f"{tier}_matches" if tier != "city_fallback" else "city_fallback"] += 1
+                logger.debug(f"[enricher] Geocoded #{listing['id']} ({tier}): {lat},{lng}")
             else:
                 stats["failed"] += 1
 
             if stats["processed"] % 50 == 0:
+                total_lookups = stats["cache_hits"] + stats["cache_misses"]
+                pct = (stats["cache_hits"] / total_lookups * 100) if total_lookups else 0
                 logger.info(
                     f"[enricher] Progress: {stats['processed']}/{len(to_geocode)} "
-                    f"({stats['geocoded']} geocoded)"
+                    f"({stats['geocoded']} geocoded, cache {pct:.0f}%)"
                 )
 
+        total_lookups = stats["cache_hits"] + stats["cache_misses"]
+        pct = (stats["cache_hits"] / total_lookups * 100) if total_lookups else 0
+        logger.info(f"[enricher] cache hits: {stats['cache_hits']}/{total_lookups} ({pct:.1f}%)")
         logger.info(
-            f"[enricher] Done: {stats['processed']} processed, "
-            f"{stats['geocoded']} geocoded, "
-            f"{stats['failed']} failed, "
-            f"{stats['skipped']} skipped"
+            f"[enricher] Done: processed={stats['processed']} geocoded={stats['geocoded']} "
+            f"failed={stats['failed']} skipped={stats['skipped']} "
+            f"precise={stats['precise_matches']} neigh={stats['neighborhood_matches']} "
+            f"city={stats['city_fallback']}"
         )
         _finish_run(db, run_id, "completed", stats)
 
@@ -106,84 +107,170 @@ def run_enricher() -> dict[str, int]:
     return stats
 
 
-def _build_query(listing: dict[str, Any]) -> Optional[str]:
-    """Build a geocoding query string from listing address fields."""
-    parts = []
-
-    # Street address
-    addr = listing.get("address") or listing.get("street")
-    if addr and addr.lower() not in ("endereço indisponível", "não informado"):
-        parts.append(addr)
-
-    # Neighborhood
-    neigh = listing.get("neighborhood")
-    if neigh:
-        parts.append(neigh)
-
-    # City + State
-    city = listing.get("city", "Marília")
-    state = listing.get("state", "SP")
-    parts.append(f"{city}, {state}")
-
-    # Need at least neighborhood + city
-    if len(parts) < 2:
-        return None
-
-    return ", ".join(parts)
-
-
-def _geocode(query: str) -> Optional[tuple[float, float]]:
-    """Geocode an address using Nominatim. Returns (lat, lng) or None."""
-    time.sleep(REQUEST_DELAY)
-
-    try:
-        resp = httpx.get(
-            NOMINATIM_URL,
-            params={
-                "q": query,
-                "format": "json",
-                "limit": 1,
-                "countrycodes": "br",
-            },
-            headers=NOMINATIM_HEADERS,
-            timeout=10,
+def _fetch_listings(db: Any, max_items: int) -> list[dict]:
+    listings: list[dict] = []
+    page_size = 1000
+    offset = 0
+    while len(listings) < max_items:
+        result = (
+            db.table("listings")
+            .select("id, address, street, number, neighborhood, city, state, zip_code")
+            .eq("is_active", True)
+            .is_("latitude", "null")
+            .range(offset, offset + page_size - 1)
+            .execute()
         )
-        resp.raise_for_status()
-        results = resp.json()
+        if not result.data:
+            break
+        listings.extend(result.data)
+        if len(result.data) < page_size:
+            break
+        offset += page_size
+    return listings[:max_items]
 
-        if results:
-            lat = float(results[0]["lat"])
-            lon = float(results[0]["lon"])
-            return lat, lon
 
-    except Exception:
-        logger.debug(f"[enricher] Geocoding failed for: {query}", exc_info=True)
+def _normalize(text: str) -> str:
+    s = unicodedata.normalize("NFKD", text.lower().strip())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.split())
 
-    # Fallback: try with just neighborhood + city
-    parts = query.split(",")
-    if len(parts) > 2:
-        fallback = ", ".join(parts[-2:]).strip()
+
+def _hash_query(query: str) -> str:
+    return hashlib.sha256(_normalize(query).encode("utf-8")).hexdigest()
+
+
+def _clean(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    v = value.strip()
+    if _normalize(v) in NOISE_VALUES:
+        return None
+    return v
+
+
+def _build_candidates(listing: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return list of (tier, query) ordered by precision."""
+    street = _clean(listing.get("street") or listing.get("address"))
+    number = _clean(str(listing.get("number") or ""))
+    neigh = _clean(listing.get("neighborhood"))
+    city = _clean(listing.get("city")) or "Marília"
+    state = _clean(listing.get("state")) or "SP"
+
+    out: list[tuple[str, str]] = []
+
+    if street and neigh:
+        head = f"{street} {number}".strip() if number else street
+        out.append(("precise", f"{head}, {neigh}, {city}, {state}, Brasil"))
+
+    if neigh:
+        out.append(("neighborhood", f"{neigh}, {city}, {state}, Brasil"))
+
+    out.append(("city_fallback", f"{city}, {state}, Brasil"))
+
+    # Need >=2 parts of signal (more than just city) for first try; city fallback always last.
+    if len(out) == 1:  # only city_fallback present
+        return []
+    return out
+
+
+def _geocode_with_candidates(
+    db: Any, candidates: list[tuple[str, str]], stats: dict[str, int]
+) -> Optional[tuple[float, float, str]]:
+    for tier, query in candidates:
+        coords = _lookup_cache(db, query, stats)
+        if coords:
+            return coords[0], coords[1], tier
+
+        coords = _nominatim_request(query)
+        if coords:
+            provider = "city_centroid" if tier == "city_fallback" else "nominatim"
+            _store_cache(db, query, coords, provider)
+            return coords[0], coords[1], tier
+    return None
+
+
+def _lookup_cache(
+    db: Any, query: str, stats: dict[str, int]
+) -> Optional[tuple[float, float]]:
+    qhash = _hash_query(query)
+    result = (
+        db.table("geocode_cache")
+        .select("latitude, longitude, hit_count")
+        .eq("query_hash", qhash)
+        .limit(1)
+        .execute()
+    )
+    if result.data:
+        row = result.data[0]
+        stats["cache_hits"] += 1
+        db.table("geocode_cache").update({
+            "hit_count": (row.get("hit_count") or 0) + 1,
+            "last_used_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("query_hash", qhash).execute()
+        return float(row["latitude"]), float(row["longitude"])
+    stats["cache_misses"] += 1
+    return None
+
+
+def _store_cache(
+    db: Any, query: str, coords: tuple[float, float], provider: str
+) -> None:
+    qhash = _hash_query(query)
+    now = datetime.now(timezone.utc).isoformat()
+    db.table("geocode_cache").upsert({
+        "query_hash": qhash,
+        "query_text": query[:500],
+        "latitude": coords[0],
+        "longitude": coords[1],
+        "provider": provider,
+        "hit_count": 1,
+        "last_used_at": now,
+        "created_at": now,
+    }, on_conflict="query_hash").execute()
+
+
+def _nominatim_request(query: str) -> Optional[tuple[float, float]]:
+    params = {
+        "q": query,
+        "format": "json",
+        "limit": 1,
+        "countrycodes": "br",
+        "viewbox": VIEWBOX,
+        "bounded": "0",
+    }
+    for attempt in range(MAX_ATTEMPTS):
         time.sleep(REQUEST_DELAY)
         try:
             resp = httpx.get(
-                NOMINATIM_URL,
-                params={
-                    "q": fallback,
-                    "format": "json",
-                    "limit": 1,
-                    "countrycodes": "br",
-                },
-                headers=NOMINATIM_HEADERS,
-                timeout=10,
+                NOMINATIM_URL, params=params,
+                headers=NOMINATIM_HEADERS, timeout=TIMEOUT,
             )
             resp.raise_for_status()
             results = resp.json()
-            if results:
-                return float(results[0]["lat"]), float(results[0]["lon"])
-        except Exception:
-            pass
-
+            if not results:
+                return None
+            lat = float(results[0]["lat"])
+            lon = float(results[0]["lon"])
+            if _haversine(lat, lon, MARILIA_LAT, MARILIA_LNG) > MAX_DISTANCE_KM:
+                logger.debug(f"[enricher] Discarded far result for: {query}")
+                return None
+            return lat, lon
+        except httpx.TimeoutException:
+            logger.debug(f"[enricher] timeout attempt {attempt+1} for: {query}")
+        except httpx.HTTPError as e:
+            logger.debug(f"[enricher] http error attempt {attempt+1}: {e}")
+        if attempt < MAX_ATTEMPTS - 1:
+            time.sleep(BACKOFF[attempt])
     return None
+
+
+def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
 
 
 def _finish_run(

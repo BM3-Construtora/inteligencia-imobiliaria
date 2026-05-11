@@ -1,6 +1,6 @@
 # MariliaBot — Inteligencia Imobiliaria
 
-Sistema de inteligencia imobiliaria para Marilia-SP. Coleta automatica de 6 fontes, analise com IA, scoring de oportunidades, simulador financeiro MCMV e dashboard interativo com mapa.
+Sistema de inteligencia imobiliaria para Marilia-SP. Coleta automatica de 5 fontes, analise com IA, scoring de oportunidades, simulador financeiro MCMV e dashboard interativo com mapa.
 
 Desenvolvido para a **BM3 Construtora**, focado em responder: **ONDE, O QUE e QUANDO construir**.
 
@@ -8,7 +8,7 @@ Desenvolvido para a **BM3 Construtora**, focado em responder: **ONDE, O QUE e QU
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────────┐
-│  6 Fontes   │────▶│ 15 Agentes   │────▶│  Supabase   │────▶│  Dashboard   │
+│  5 Fontes   │────▶│ 15 Agentes   │────▶│  Supabase   │────▶│  Dashboard   │
 │  de Dados   │     │  Python/IA   │     │  PostgreSQL │     │  React/Vite  │
 └─────────────┘     └──────────────┘     └─────────────┘     └──────────────┘
        │                   │                                        │
@@ -23,7 +23,7 @@ Desenvolvido para a **BM3 Construtora**, focado em responder: **ONDE, O QUE e QU
 ## Pipeline Diario (GitHub Actions — 06:00 BRT)
 
 ```
-Collect (6 fontes, paralelo)    ~3 min
+Collect (5 fontes, paralelo)    ~3 min
   ↓
 Normalize + Classify            ~1 min
   ↓
@@ -51,7 +51,7 @@ Notify + Alerts                 ~5s
 | Toca Imoveis | Supabase REST | ~2.000 | Ativo |
 | VivaReal | HTML Scraping | ~600 | Ativo |
 | Chaves na Mao | HTML Scraping | ~300 | Ativo |
-| Imovelweb | HTML Scraping | ~120 | Ativo (CF limita) |
+| Imovelweb | HTML Scraping | 0 | Retirado |
 | ZAP Imoveis | HTML Scraping | ~600 | Ativo |
 | **SINAPI/IBGE** | API publica | Indices | Ativo |
 | **CRECI-SP** | LLM extraction | Benchmarks | Ativo |

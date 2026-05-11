@@ -100,26 +100,92 @@ def _validate_area(area: Optional[float]) -> Optional[float]:
     return area
 
 
-def _validate_listing(data: dict[str, Any]) -> dict[str, Any]:
-    """Apply semantic validations and fix inconsistencies."""
-    ptype = data.get("property_type")
-    price = data.get("sale_price")
-    total = data.get("total_area")
-    built = data.get("built_area")
+ACCEPTED_CITIES = {"marilia", "marília"}
 
-    # built_area > total_area is impossible — swap or discard
+
+def _normalize_city_key(city: Optional[str]) -> str:
+    if not city:
+        return ""
+    return (
+        city.strip()
+        .lower()
+        .replace("í", "i")
+        .replace("?", "i")
+    )
+
+
+def _is_marilia(city: Optional[str]) -> bool:
+    key = _normalize_city_key(city)
+    if not key:
+        return False
+    return key in {"marilia"} or "marilia" in key
+
+
+def _log_quality(
+    db: Any,
+    raw_id: Optional[int],
+    source: Optional[str],
+    source_id: Optional[str],
+    severity: str,
+    rule: str,
+    details: dict[str, Any],
+) -> None:
+    try:
+        db.table("data_quality_log").insert({
+            "raw_listing_id": raw_id,
+            "source": source,
+            "source_id": source_id,
+            "severity": severity,
+            "rule": rule,
+            "details": details,
+        }).execute()
+    except Exception:
+        logger.warning(f"[normalizer] Failed to log quality issue {rule} for {source}:{source_id}")
+
+
+def _validate_listing(data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Apply semantic validations. Returns None to reject, or dict (possibly quarantined)."""
+    ptype = data.get("property_type")
+    price = _safe_float(data.get("sale_price"))
+    total = _safe_float(data.get("total_area"))
+    built = _safe_float(data.get("built_area"))
+
     if built and total and built > total:
         data["built_area"], data["total_area"] = total, built
-        data["price_per_m2"] = _calc_price_per_m2(price, data["total_area"])
+        total = data["total_area"]
+        data["price_per_m2"] = _calc_price_per_m2(price, total)
 
-    # Suspiciously low prices for residential
-    if price is not None and price < 1000 and ptype in ("house", "apartment", "condo_house"):
-        data["sale_price"] = None
-        data["price_per_m2"] = None
-
-    # Bedrooms = 0 for apartment is likely missing data, not studio
     if ptype == "apartment" and data.get("bedrooms") == 0:
         data["bedrooms"] = None
+
+    if price is None and total is None:
+        return None
+
+    residential = ptype in ("house", "apartment", "condo_house")
+    rural = ptype in ("farm", "rural")
+    ppm2 = _safe_float(data.get("price_per_m2"))
+
+    quarantine_reason: Optional[str] = None
+    details: dict[str, Any] = {"price": price, "area": total}
+
+    if residential and price is not None and price < 30_000:
+        quarantine_reason = "price_too_low"
+    elif price is not None and price > 50_000_000:
+        quarantine_reason = "price_too_high"
+    elif total is not None and total > 0 and ppm2 is not None and ppm2 < 300:
+        quarantine_reason = "ppm2_too_low"
+    elif ppm2 is not None and ppm2 > 30_000:
+        quarantine_reason = "ppm2_too_high"
+    elif not rural and total is not None and total > 50_000:
+        quarantine_reason = "area_implausible"
+
+    if quarantine_reason:
+        data["quarantined"] = True
+        data["quarantine_reason"] = quarantine_reason
+        data["_quarantine_details"] = details
+    else:
+        data["quarantined"] = False
+        data["quarantine_reason"] = None
 
     return data
 
@@ -186,7 +252,6 @@ def normalize_uniao(raw: dict[str, Any]) -> dict[str, Any]:
         "parking_spaces": _safe_int(raw.get("parkingSpaces")),
         "description": raw.get("description"),
         "features": features,
-        "is_mcmv": raw.get("isAvailableForMCMV", False),
         "is_featured": raw.get("isFeatured", False),
         "is_active": raw.get("isActive", True),
         "main_image_url": main_image_url,
@@ -262,7 +327,6 @@ def normalize_toca(raw: dict[str, Any]) -> dict[str, Any]:
         "parking_spaces": _safe_int(raw.get("garagem")),
         "description": raw.get("descricao"),
         "features": features,
-        "is_mcmv": False,
         "is_featured": raw.get("destaque") == "1" or raw.get("destaque_venda") == "1",
         "is_active": True,
         "main_image_url": main_image_url,
@@ -327,7 +391,6 @@ def normalize_html_scraper(source: str, raw: dict[str, Any]) -> dict[str, Any]:
         "parking_spaces": _safe_int(raw.get("parking")),
         "description": raw.get("description", ""),
         "features": [],
-        "is_mcmv": False,
         "is_featured": False,
         "is_active": True,
         "main_image_url": main_image_url,
@@ -413,24 +476,50 @@ def run_normalizer() -> dict[str, int]:
             # Phase 1: Normalize all items in memory (no API calls)
             normalized_batch = []
             raw_ids = []
+            processed_raw_ids: list[int] = []
             now = datetime.now(timezone.utc).isoformat()
 
             for raw_row in batch.data:
                 try:
                     source = raw_row["source"]
+                    raw_id = raw_row["id"]
+                    src_id = raw_row.get("source_id")
                     normalizer_fn = NORMALIZERS.get(source)
                     if not normalizer_fn:
                         stats["failed"] += 1
                         continue
 
                     normalized = normalizer_fn(raw_row["raw_data"])
-                    normalized = _validate_listing(normalized)
-                    normalized["last_seen_at"] = now
-                    normalized["updated_at"] = now
-                    # first_seen_at is set below per-item (preserve for existing)
 
-                    normalized_batch.append(normalized)
-                    raw_ids.append(raw_row["id"])
+                    if not _is_marilia(normalized.get("city")):
+                        _log_quality(
+                            db, raw_id, source, src_id, "reject", "wrong_city",
+                            {"city": normalized.get("city")},
+                        )
+                        processed_raw_ids.append(raw_id)
+                        continue
+
+                    validated = _validate_listing(normalized)
+                    if validated is None:
+                        _log_quality(
+                            db, raw_id, source, src_id, "reject", "missing_price_and_area",
+                            {"price": normalized.get("sale_price"), "area": normalized.get("total_area")},
+                        )
+                        processed_raw_ids.append(raw_id)
+                        continue
+
+                    if validated.get("quarantined"):
+                        q_details = validated.pop("_quarantine_details", {})
+                        _log_quality(
+                            db, raw_id, source, src_id, "quarantine",
+                            validated["quarantine_reason"], q_details,
+                        )
+
+                    validated["last_seen_at"] = now
+                    validated["updated_at"] = now
+
+                    normalized_batch.append(validated)
+                    raw_ids.append(raw_id)
 
                 except Exception:
                     stats["failed"] += 1
@@ -439,32 +528,39 @@ def run_normalizer() -> dict[str, int]:
                         f"{raw_row.get('source')}:{raw_row.get('source_id')}"
                     )
 
+            # Mark rejected raw_listings as processed too (don't reprocess)
+            if processed_raw_ids:
+                try:
+                    db.table("raw_listings").update({
+                        "processed": True,
+                    }).in_("id", processed_raw_ids).execute()
+                except Exception:
+                    logger.exception("[normalizer] Failed to mark rejected as processed")
+
             if not normalized_batch:
-                if stats["failed"] > 0:
+                if stats["failed"] > 0 and not processed_raw_ids:
                     break
                 continue
 
-            # Phase 1b: Lookup existing listings to preserve first_seen_at
-            # and detect price changes
+            # Phase 1b: Batched lookup grouped by source (collapses N queries → ~6)
             existing_map: dict[str, dict] = {}
-            keys = [(n["source"], n["source_id"]) for n in normalized_batch]
-            for i in range(0, len(keys), 50):
-                chunk_keys = keys[i:i + 50]
-                for source, source_id in chunk_keys:
-                    try:
-                        r = (
-                            db.table("listings")
-                            .select("id, source, source_id, first_seen_at, sale_price")
-                            .eq("source", source)
-                            .eq("source_id", source_id)
-                            .limit(1)
-                            .execute()
-                        )
-                        if r.data:
-                            row = r.data[0]
-                            existing_map[f"{row['source']}:{row['source_id']}"] = row
-                    except Exception:
-                        pass
+            by_source: dict[str, list[str]] = {}
+            for n in normalized_batch:
+                by_source.setdefault(n["source"], []).append(n["source_id"])
+
+            for source, ids_for_source in by_source.items():
+                try:
+                    r = (
+                        db.table("listings")
+                        .select("id, source, source_id, first_seen_at, sale_price")
+                        .eq("source", source)
+                        .in_("source_id", ids_for_source)
+                        .execute()
+                    )
+                    for row in r.data or []:
+                        existing_map[f"{row['source']}:{row['source_id']}"] = row
+                except Exception:
+                    logger.exception(f"[normalizer] Lookup failed for source {source}")
 
             # Set first_seen_at: preserve for existing, set NOW for new
             for normalized in normalized_batch:

@@ -7,17 +7,14 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from src.address import normalize_address, address_similarity, normalize_neighborhood
+from src.address import address_similarity, normalize_neighborhood
 from src.db import get_client
 
 logger = logging.getLogger(__name__)
 
-# Thresholds — scores are normalized by max achievable weight,
-# so 0.55 means "55% of available evidence matches".
-MIN_MATCH_SCORE = 0.55  # Record match (on normalized scale)
-HIGH_CONFIDENCE = 0.80  # Auto-merge candidate
+MIN_MATCH_SCORE = 0.55
+HIGH_CONFIDENCE = 0.80
 
-# Source priority for canonical selection (higher = preferred)
 SOURCE_PRIORITY = {
     "uniao": 5,
     "toca": 4,
@@ -31,7 +28,14 @@ SOURCE_PRIORITY = {
 def run_deduplicator() -> dict[str, int]:
     """Find and record duplicate listings across different sources."""
     db = get_client()
-    stats = {"compared": 0, "matches": 0, "high_confidence": 0, "canonical_set": 0}
+    stats: dict[str, int] = {
+        "compared": 0,
+        "matches": 0,
+        "high_confidence": 0,
+        "canonical_set": 0,
+        "canonical_groups_formed": 0,
+        "existing_promotions": 0,
+    }
 
     run_result = (
         db.table("agent_runs")
@@ -41,7 +45,6 @@ def run_deduplicator() -> dict[str, int]:
     run_id = run_result.data[0]["id"] if run_result.data else None
 
     try:
-        # Fetch all active listings with useful fields (paginate)
         listings: list[dict] = []
         page_size = 1000
         offset = 0
@@ -65,26 +68,34 @@ def run_deduplicator() -> dict[str, int]:
             offset += page_size
         logger.info(f"[dedup] Loaded {len(listings)} active listings")
 
-        # Group by normalized neighborhood
         by_neighborhood: dict[str, list[dict]] = {}
         for l in listings:
             n = normalize_neighborhood(l.get("neighborhood") or "")
             if n:
                 by_neighborhood.setdefault(n, []).append(l)
 
-        # Note: we no longer wipe listing_matches on each run.
-        # Instead we skip pairs that already have a match recorded.
         existing_pairs: set[tuple[int, int]] = set()
         try:
-            em = db.table("listing_matches").select("listing_a_id, listing_b_id").execute()
-            for row in (em.data or []):
-                existing_pairs.add((row["listing_a_id"], row["listing_b_id"]))
-        except Exception:
-            pass
+            em_offset = 0
+            while True:
+                em = (
+                    db.table("listing_matches")
+                    .select("listing_a_id, listing_b_id")
+                    .range(em_offset, em_offset + page_size - 1)
+                    .execute()
+                )
+                if not em.data:
+                    break
+                for row in em.data:
+                    existing_pairs.add((row["listing_a_id"], row["listing_b_id"]))
+                if len(em.data) < page_size:
+                    break
+                em_offset += page_size
+        except (KeyError, AttributeError) as e:
+            logger.warning(f"[dedup] Failed to preload existing pairs: {e}")
 
-        # Compare within each neighborhood
         match_pairs: list[dict] = []
-        for neigh, group in by_neighborhood.items():
+        for _, group in by_neighborhood.items():
             if len(group) < 2:
                 continue
 
@@ -96,45 +107,63 @@ def run_deduplicator() -> dict[str, int]:
                         continue
 
                     stats["compared"] += 1
-                    score, method = _compare(a, b)
+                    cmp_result = _compare(a, b)
 
-                    if score >= MIN_MATCH_SCORE:
-                        a_id, b_id = sorted([a["id"], b["id"]])
-                        pair_key = (a_id, b_id)
-                        if pair_key in existing_pairs:
-                            continue  # Already recorded
-                        match_pairs.append({
-                            "listing_a_id": a_id,
-                            "listing_b_id": b_id,
-                            "match_score": round(score, 3),
-                            "match_method": method,
-                        })
-                        existing_pairs.add(pair_key)
-                        stats["matches"] += 1
-                        if score >= HIGH_CONFIDENCE:
-                            stats["high_confidence"] += 1
+                    if cmp_result is None:
+                        continue
 
-        # Batch insert matches
+                    score = cmp_result["match_score"]
+                    if score < MIN_MATCH_SCORE:
+                        continue
+
+                    a_id, b_id = sorted([a["id"], b["id"]])
+                    pair_key = (a_id, b_id)
+                    if pair_key in existing_pairs:
+                        continue
+
+                    decision_rule = cmp_result["decision_rule"]
+                    payload = {
+                        "listing_a_id": a_id,
+                        "listing_b_id": b_id,
+                        "match_score": round(score, 3),
+                        "match_method": decision_rule,
+                        "decision_rule": decision_rule,
+                        "addr_score": cmp_result["addr_score"],
+                        "geo_distance_m": cmp_result["geo_distance_m"],
+                        "price_diff_pct": cmp_result["price_diff_pct"],
+                        "area_diff_pct": cmp_result["area_diff_pct"],
+                        "bed_match": cmp_result["bed_match"],
+                        "bath_match": cmp_result["bath_match"],
+                    }
+                    match_pairs.append(payload)
+                    existing_pairs.add(pair_key)
+                    stats["matches"] += 1
+                    if score >= HIGH_CONFIDENCE:
+                        stats["high_confidence"] += 1
+
         for i in range(0, len(match_pairs), 100):
             batch = match_pairs[i:i + 100]
             try:
                 db.table("listing_matches").insert(batch).execute()
-            except Exception:
-                # Insert one by one to skip constraint violations
+            except Exception as e:
+                logger.warning(f"[dedup] Batch insert failed ({e}); retrying one-by-one")
                 for m in batch:
                     try:
                         db.table("listing_matches").insert(m).execute()
                     except Exception:
                         pass
 
-        # Set canonical listings for high-confidence matches
         stats["canonical_set"] = _set_canonical_listings(db, match_pairs)
+        stats["existing_promotions"] = _promote_existing_canonicals(db)
+        stats["canonical_groups_formed"] = _transitive_closure(db)
 
         logger.info(
             f"[dedup] Done: {stats['compared']} compared, "
             f"{stats['matches']} matches, "
             f"{stats['high_confidence']} high confidence, "
-            f"{stats['canonical_set']} canonical set"
+            f"{stats['canonical_set']} canonical set, "
+            f"{stats['existing_promotions']} legacy promotions, "
+            f"{stats['canonical_groups_formed']} groups"
         )
         _finish_run(db, run_id, "completed", stats)
 
@@ -146,210 +175,341 @@ def run_deduplicator() -> dict[str, int]:
     return stats
 
 
-def _clean_tokens(text: str) -> set[str]:
-    """Extract meaningful tokens from a listing title, stripping noise."""
-    import re
-    from src.address import remove_accents
-    # Lowercase, remove accents, strip non-alphanumeric (except spaces)
-    text = re.sub(r"[^\w\s]", " ", remove_accents(text.lower()))
-    tokens = set(text.split())
-    # Remove stopwords AND portal-generic format tokens that cause false positives
-    stop = {
-        "de", "do", "da", "dos", "das", "em", "no", "na", "com", "e", "a", "o",
-        "para", "por", "um", "uma", "venda", "aluguel", "marilia", "sp",
-        "comprar", "alugar", "quartos", "quarto", "banheiros", "banheiro",
-        "vagas", "vaga", "suites", "suite", "m2", "m",
-        "casa", "apartamento", "terreno", "comercial", "sobrado", "kitnet",
-        "imovel", "lote", "area", "chacara", "sitio", "galpao", "sala",
-        "condominio", "residencial", "residencia",
-    }
-    tokens -= stop
-    # Remove pure numbers (area values, room counts)
-    tokens = {t for t in tokens if not t.isdigit()}
-    return tokens
-
-
-def _title_similarity(a: str, b: str) -> float:
-    """Token-based Jaccard similarity between two titles."""
-    if not a or not b:
-        return 0.0
-    tokens_a = _clean_tokens(a)
-    tokens_b = _clean_tokens(b)
-    if len(tokens_a) < 2 or len(tokens_b) < 2:
-        return 0.0
-    intersection = tokens_a & tokens_b
-    union = tokens_a | tokens_b
-    return len(intersection) / len(union)
-
-
-def _compare(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
-    """Compare two listings. Returns (score, method).
-
-    Strategy:
-    - source_id match = definitive (vivareal↔zapimoveis share IDs)
-    - source_id MISMATCH between vivareal↔zapimoveis = definitive NOT a match
-    - For other pairs: require address/geo match OR (price AND area) match.
-      Title/bed/bath alone are NEVER enough — too many similar listings per neighborhood.
-    """
+def _compare(a: dict[str, Any], b: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Compare two listings. Returns dict with split signals or None."""
     src_a = a.get("source", "")
     src_b = b.get("source", "")
     sid_a = a.get("source_id") or ""
     sid_b = b.get("source_id") or ""
 
-    # --- Definitive: source_id match/mismatch ---
     if sid_a and sid_b:
         if sid_a == sid_b:
-            return 1.0, "source_id_match"
-        # Same portal family with different IDs = different listings
+            return {
+                "match_score": 1.0,
+                "addr_score": None,
+                "geo_distance_m": None,
+                "price_diff_pct": None,
+                "area_diff_pct": None,
+                "bed_match": None,
+                "bath_match": None,
+                "decision_rule": "source_id_match",
+            }
         shared_id_portals = {"vivareal", "zapimoveis"}
         if src_a in shared_id_portals and src_b in shared_id_portals:
-            return 0.0, "source_id_mismatch"
+            return None
 
-    # --- Collect identity signals (things that identify a SPECIFIC property) ---
-    methods: list[str] = []
-
-    # 1. Geographic proximity
+    geo_distance_m: Optional[float] = None
     geo_match = False
     lat_a, lng_a = a.get("latitude"), a.get("longitude")
     lat_b, lng_b = b.get("latitude"), b.get("longitude")
     if lat_a and lng_a and lat_b and lng_b:
-        dist = _haversine(float(lat_a), float(lng_a), float(lat_b), float(lng_b))
-        if dist <= 50:
+        geo_distance_m = round(_haversine(float(lat_a), float(lng_a), float(lat_b), float(lng_b)), 1)
+        if geo_distance_m <= 50:
             geo_match = True
-            methods.append(f"geo_{int(dist)}m")
 
-    # 2. Address match
+    addr_score: Optional[float] = None
     addr_match = False
     addr_a = a.get("address") or a.get("street") or ""
     addr_b = b.get("address") or b.get("street") or ""
     if addr_a and addr_b:
-        sim = address_similarity(addr_a, addr_b)
-        if sim >= 0.70:
+        addr_score = round(address_similarity(addr_a, addr_b), 3)
+        if addr_score >= 0.70:
             addr_match = True
-            methods.append(f"addr_{sim:.0%}")
 
-    # 3. Price similarity
+    price_diff_pct: Optional[float] = None
     price_match = False
     price_a = float(a.get("sale_price") or 0)
     price_b = float(b.get("sale_price") or 0)
-    price_diff = None
     if price_a > 0 and price_b > 0:
-        price_diff = abs(price_a - price_b) / max(price_a, price_b)
-        if price_diff <= 0.10:
+        price_diff_pct = round(abs(price_a - price_b) / max(price_a, price_b), 3)
+        if price_diff_pct <= 0.10:
             price_match = True
-            methods.append(f"price_{price_diff:.0%}")
 
-    # 4. Area similarity
+    area_diff_pct: Optional[float] = None
     area_match = False
     area_a = float(a.get("total_area") or 0)
     area_b = float(b.get("total_area") or 0)
-    area_diff = None
     if area_a > 0 and area_b > 0:
-        area_diff = abs(area_a - area_b) / max(area_a, area_b)
-        if area_diff <= 0.10:
+        area_diff_pct = round(abs(area_a - area_b) / max(area_a, area_b), 3)
+        if area_diff_pct <= 0.10:
             area_match = True
-            methods.append(f"area_{area_diff:.0%}")
 
-    # --- Bed/bath signals (used in decision logic below) ---
     bed_a, bed_b = a.get("bedrooms"), b.get("bedrooms")
     bath_a, bath_b = a.get("bathrooms"), b.get("bathrooms")
-    bed_match = bed_a is not None and bed_b is not None and bed_a == bed_b
-    bath_match = bath_a is not None and bath_b is not None and bath_a == bath_b
-    bed_mismatch = (bed_a is not None and bed_b is not None and bed_a != bed_b)
-    bath_mismatch = (bath_a is not None and bath_b is not None and bath_a != bath_b)
+    bed_match_val: Optional[bool] = None
+    bath_match_val: Optional[bool] = None
+    if bed_a is not None and bed_b is not None:
+        bed_match_val = bed_a == bed_b
+    if bath_a is not None and bath_b is not None:
+        bath_match_val = bath_a == bath_b
+    bed_match = bed_match_val is True
+    bath_match = bath_match_val is True
+    bed_mismatch = bed_match_val is False
+    bath_mismatch = bath_match_val is False
 
-    # --- Decision: require strong cross-domain evidence ---
-    # Same street ≠ same property (many units per street/building).
-    # Need LOCATION + FINANCIAL confirmation. Bed/bath mismatch vetoes weak matches.
     location_confirmed = addr_match or geo_match
     financials_confirmed = price_match and area_match
 
     if (bed_mismatch or bath_mismatch) and not (location_confirmed and financials_confirmed):
-        # Different bedroom/bathroom count = almost certainly different property
-        # unless BOTH location AND financials match perfectly
-        return 0.0, "bed_bath_mismatch"
+        return None
 
+    decision_rule: str
+    score: float
     if location_confirmed and financials_confirmed:
         score = 0.95
+        decision_rule = "loc+financial"
     elif location_confirmed and price_match and (bed_match or bath_match):
-        # Location + price + bed/bath = strong
         score = 0.90
+        decision_rule = "loc+price+attrs"
     elif location_confirmed and area_match and (bed_match or bath_match):
-        # Location + area + bed/bath = decent
         score = 0.88
+        decision_rule = "loc+area+attrs"
     elif financials_confirmed and (bed_match or bath_match):
-        # Price+area match with bed/bath but no location
-        tight = (price_diff if price_diff is not None else 1) <= 0.05 and (area_diff if area_diff is not None else 1) <= 0.05
+        tight = (
+            (price_diff_pct if price_diff_pct is not None else 1) <= 0.05
+            and (area_diff_pct if area_diff_pct is not None else 1) <= 0.05
+        )
         score = 0.85 if tight else 0.82
+        decision_rule = "financial+attrs"
     elif geo_match and (bed_match and bath_match):
-        # Geo < 50m with matching bed AND bath
         score = 0.80
+        decision_rule = "geo_tight+attrs"
     else:
-        return 0.0, "insufficient_evidence"
+        return None
 
-    # Small bonus for bed/bath match
     if bed_match:
         score = min(1.0, score + 0.02)
-        methods.append("bed")
     if bath_match:
         score = min(1.0, score + 0.02)
-        methods.append("bath")
 
-    return round(score, 3), "+".join(methods)
+    return {
+        "match_score": round(score, 3),
+        "addr_score": addr_score,
+        "geo_distance_m": geo_distance_m,
+        "price_diff_pct": price_diff_pct,
+        "area_diff_pct": area_diff_pct,
+        "bed_match": bed_match_val,
+        "bath_match": bath_match_val,
+        "decision_rule": decision_rule,
+    }
 
 
 def _set_canonical_listings(db: Any, match_pairs: list[dict]) -> int:
-    """For high-confidence matches, set canonical_listing_id on the inferior listing."""
+    """For high-confidence matches in this run, set canonical_listing_id."""
     high_conf = [m for m in match_pairs if m["match_score"] >= HIGH_CONFIDENCE]
     if not high_conf:
         return 0
 
-    # Collect all listing IDs involved
-    ids_needed = set()
+    ids_needed: set[int] = set()
     for m in high_conf:
         ids_needed.add(m["listing_a_id"])
         ids_needed.add(m["listing_b_id"])
 
-    # Batch fetch source info (avoid N+1)
-    source_map: dict[int, str] = {}
-    id_list = list(ids_needed)
-    for i in range(0, len(id_list), 200):
-        batch_ids = id_list[i:i + 200]
-        try:
-            result = db.table("listings").select("id, source").in_("id", batch_ids).execute()
-            for r in result.data:
-                source_map[r["id"]] = r["source"]
-        except Exception:
-            pass
+    source_map = _fetch_source_map(db, ids_needed)
 
     count = 0
     for m in high_conf:
         a_id = m["listing_a_id"]
         b_id = m["listing_b_id"]
-        src_a = source_map.get(a_id, "")
-        src_b = source_map.get(b_id, "")
-        prio_a = SOURCE_PRIORITY.get(src_a, 0)
-        prio_b = SOURCE_PRIORITY.get(src_b, 0)
-
-        # Higher priority = canonical. On tie, lower ID wins.
-        if prio_a >= prio_b:
-            canonical_id, duplicate_id = a_id, b_id
-        else:
-            canonical_id, duplicate_id = b_id, a_id
-
-        try:
-            db.table("listings").update(
-                {"canonical_listing_id": canonical_id}
-            ).eq("id", duplicate_id).is_("canonical_listing_id", "null").execute()
+        if _promote_pair(db, a_id, b_id, source_map):
             count += 1
-        except Exception:
-            pass
-
     return count
 
 
+def _promote_existing_canonicals(db: Any) -> int:
+    """Iterate ALL high-confidence listing_matches and ensure canonical_listing_id is set."""
+    page_size = 1000
+    offset = 0
+    pairs: list[tuple[int, int]] = []
+    while True:
+        try:
+            res = (
+                db.table("listing_matches")
+                .select("listing_a_id, listing_b_id, match_score")
+                .gte("match_score", HIGH_CONFIDENCE)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+        except Exception as e:
+            logger.warning(f"[dedup] Failed loading existing matches: {e}")
+            break
+        if not res.data:
+            break
+        for row in res.data:
+            pairs.append((row["listing_a_id"], row["listing_b_id"]))
+        if len(res.data) < page_size:
+            break
+        offset += page_size
+
+    if not pairs:
+        return 0
+
+    ids_needed: set[int] = set()
+    for a_id, b_id in pairs:
+        ids_needed.add(a_id)
+        ids_needed.add(b_id)
+
+    source_map = _fetch_source_map(db, ids_needed)
+    canonical_map = _fetch_canonical_map(db, ids_needed)
+
+    count = 0
+    for a_id, b_id in pairs:
+        if canonical_map.get(a_id) is not None and canonical_map.get(b_id) is not None:
+            continue
+        if _promote_pair(db, a_id, b_id, source_map, canonical_map):
+            count += 1
+    return count
+
+
+def _transitive_closure(db: Any) -> int:
+    """Union-find across high-confidence pairs; converge each group on one canonical."""
+    page_size = 1000
+    offset = 0
+    pairs: list[tuple[int, int]] = []
+    while True:
+        try:
+            res = (
+                db.table("listing_matches")
+                .select("listing_a_id, listing_b_id")
+                .gte("match_score", HIGH_CONFIDENCE)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+        except Exception as e:
+            logger.warning(f"[dedup] Closure load failed: {e}")
+            break
+        if not res.data:
+            break
+        for row in res.data:
+            pairs.append((row["listing_a_id"], row["listing_b_id"]))
+        if len(res.data) < page_size:
+            break
+        offset += page_size
+
+    if not pairs:
+        return 0
+
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent.get(x, x), parent.get(x, x))
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[rx] = ry
+
+    ids_needed: set[int] = set()
+    for a_id, b_id in pairs:
+        parent.setdefault(a_id, a_id)
+        parent.setdefault(b_id, b_id)
+        ids_needed.add(a_id)
+        ids_needed.add(b_id)
+        union(a_id, b_id)
+
+    groups: dict[int, list[int]] = {}
+    for node in list(parent.keys()):
+        root = find(node)
+        groups.setdefault(root, []).append(node)
+
+    groups = {r: members for r, members in groups.items() if len(members) >= 2}
+    if not groups:
+        return 0
+
+    source_map = _fetch_source_map(db, ids_needed)
+    canonical_map = _fetch_canonical_map(db, ids_needed)
+
+    formed = 0
+    for members in groups.values():
+        canonical_id = max(
+            members,
+            key=lambda lid: (SOURCE_PRIORITY.get(source_map.get(lid, ""), 0), -lid),
+        )
+        for lid in members:
+            if lid == canonical_id:
+                continue
+            current = canonical_map.get(lid)
+            if current == canonical_id:
+                continue
+            try:
+                db.table("listings").update(
+                    {"canonical_listing_id": canonical_id}
+                ).eq("id", lid).execute()
+                canonical_map[lid] = canonical_id
+            except Exception:
+                continue
+        formed += 1
+    return formed
+
+
+def _fetch_source_map(db: Any, ids: set[int]) -> dict[int, str]:
+    source_map: dict[int, str] = {}
+    id_list = list(ids)
+    for i in range(0, len(id_list), 200):
+        batch_ids = id_list[i:i + 200]
+        try:
+            result = db.table("listings").select("id, source").in_("id", batch_ids).execute()
+            for r in result.data or []:
+                source_map[r["id"]] = r["source"]
+        except Exception:
+            continue
+    return source_map
+
+
+def _fetch_canonical_map(db: Any, ids: set[int]) -> dict[int, Optional[int]]:
+    cmap: dict[int, Optional[int]] = {}
+    id_list = list(ids)
+    for i in range(0, len(id_list), 200):
+        batch_ids = id_list[i:i + 200]
+        try:
+            result = (
+                db.table("listings")
+                .select("id, canonical_listing_id")
+                .in_("id", batch_ids)
+                .execute()
+            )
+            for r in result.data or []:
+                cmap[r["id"]] = r.get("canonical_listing_id")
+        except Exception:
+            continue
+    return cmap
+
+
+def _promote_pair(
+    db: Any,
+    a_id: int,
+    b_id: int,
+    source_map: dict[int, str],
+    canonical_map: Optional[dict[int, Optional[int]]] = None,
+) -> bool:
+    src_a = source_map.get(a_id, "")
+    src_b = source_map.get(b_id, "")
+    prio_a = SOURCE_PRIORITY.get(src_a, 0)
+    prio_b = SOURCE_PRIORITY.get(src_b, 0)
+
+    if prio_a > prio_b or (prio_a == prio_b and a_id < b_id):
+        canonical_id, duplicate_id = a_id, b_id
+    else:
+        canonical_id, duplicate_id = b_id, a_id
+
+    if canonical_map is not None and canonical_map.get(duplicate_id) == canonical_id:
+        return False
+
+    try:
+        db.table("listings").update(
+            {"canonical_listing_id": canonical_id}
+        ).eq("id", duplicate_id).is_("canonical_listing_id", "null").execute()
+        if canonical_map is not None:
+            canonical_map[duplicate_id] = canonical_id
+        return True
+    except Exception:
+        return False
+
+
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate distance in meters between two points."""
     R = 6371000
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)

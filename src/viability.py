@@ -11,6 +11,8 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from postgrest.exceptions import APIError
+
 from src.db import get_client
 
 logger = logging.getLogger(__name__)
@@ -352,6 +354,9 @@ def run_viability(
         if ids_to_clear:
             db.table("viability_studies").delete().in_("listing_id", ids_to_clear).execute()
 
+        typed_cols_available = True
+        legacy_warning_emitted = False
+
         for listing in listings:
             stats["analyzed"] += 1
             best_result = None
@@ -399,13 +404,47 @@ def run_viability(
                         best_margin = margin
                         best_result = study
 
-                    db.table("viability_studies").insert({
+                    outputs = study["outputs"]
+                    inputs = study["inputs"]
+                    base_payload: dict[str, Any] = {
                         "listing_id": listing["id"],
                         "scenario": study["scenario"],
-                        "inputs": study["inputs"],
-                        "outputs": study["outputs"],
+                        "inputs": inputs,
+                        "outputs": outputs,
                         "is_viable": study["is_viable"],
-                    }).execute()
+                    }
+                    typed_payload = {
+                        **base_payload,
+                        "land_cost": inputs.get("custo_terreno"),
+                        "construction_cost": outputs.get("custo_total_obra"),
+                        "total_cost": outputs.get("investimento_total"),
+                        "vgv": outputs.get("vgv"),
+                        "gross_margin_pct": outputs.get("margem_bruta_pct"),
+                        "net_margin_pct": outputs.get("margem_liquida_pct"),
+                        "roi_pct": outputs.get("roi_pct"),
+                        "irr_annual_pct": outputs.get("tir_anual_pct"),
+                        "payback_months": outputs.get("payback_meses"),
+                        "units": outputs.get("unidades"),
+                    }
+
+                    if typed_cols_available:
+                        try:
+                            db.table("viability_studies").insert(typed_payload).execute()
+                        except APIError as e:
+                            msg = str(e)
+                            if "PGRST204" in msg or "column" in msg.lower():
+                                typed_cols_available = False
+                                if not legacy_warning_emitted:
+                                    logger.warning(
+                                        "[viability] Colunas tipadas ausentes em viability_studies. "
+                                        "Aplique sql/015_viability_columns.sql. Usando JSON legado."
+                                    )
+                                    legacy_warning_emitted = True
+                                db.table("viability_studies").insert(base_payload).execute()
+                            else:
+                                raise
+                    else:
+                        db.table("viability_studies").insert(base_payload).execute()
 
                 if best_result:
                     logger.info(

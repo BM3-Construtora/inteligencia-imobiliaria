@@ -11,7 +11,8 @@ from src.collectors.uniao import UniaoCollector
 from src.collectors.toca import TocaCollector
 from src.collectors.vivareal import VivaRealCollector
 from src.collectors.chavesnamao import ChavesNaMaoCollector
-from src.collectors.imovelweb import ImovelwebCollector
+# imovelweb collector retired 2026-05-11: Cloudflare blocks ~100% of requests
+# from src.collectors.imovelweb import ImovelwebCollector
 from src.collectors.zapimoveis import ZapImoveisCollector
 
 logging.basicConfig(
@@ -26,9 +27,10 @@ COLLECTORS = {
     "toca": TocaCollector,
     "vivareal": VivaRealCollector,
     "chavesnamao": ChavesNaMaoCollector,
-    "imovelweb": ImovelwebCollector,
     "zapimoveis": ZapImoveisCollector,
 }
+
+RETIRED_COLLECTORS = {"imovelweb"}
 
 USAGE = """
 MaríliaBot — Inteligência Imobiliária
@@ -315,6 +317,12 @@ def main() -> None:
 
     if command == "collect":
         names = args[1:] if len(args) > 1 else None
+        if names:
+            for n in names:
+                if n in RETIRED_COLLECTORS:
+                    raise SystemExit(
+                        f"{n} collector retired. See sql/data analysis: 0/177 active."
+                    )
         asyncio.run(run_collectors(names))
     elif command == "normalize":
         run_normalize()

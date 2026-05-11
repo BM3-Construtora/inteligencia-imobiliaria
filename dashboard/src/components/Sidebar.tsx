@@ -5,12 +5,13 @@ import {
   Calculator,
   BarChart3,
   Table2,
+  Activity,
   ChevronLeft,
   ChevronRight,
   Building2,
 } from 'lucide-react'
 
-export type Page = 'overview' | 'map' | 'decision' | 'viability' | 'market' | 'opportunities'
+export type Page = 'overview' | 'map' | 'decision' | 'viability' | 'market' | 'opportunities' | 'data-health'
 
 const NAV_ITEMS: { key: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'overview', label: 'Visao Geral', icon: LayoutDashboard },
@@ -19,6 +20,7 @@ const NAV_ITEMS: { key: Page; label: string; icon: typeof LayoutDashboard }[] = 
   { key: 'viability', label: 'Viabilidade', icon: Calculator },
   { key: 'market', label: 'Mercado', icon: BarChart3 },
   { key: 'opportunities', label: 'Oportunidades', icon: Table2 },
+  { key: 'data-health', label: 'Saude dos Dados', icon: Activity },
 ]
 
 interface SidebarProps {

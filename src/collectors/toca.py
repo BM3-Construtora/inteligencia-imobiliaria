@@ -13,6 +13,15 @@ from src.collectors.base import BaseCollector
 logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 100
+
+
+def _is_marilia(city: str | None) -> bool:
+    if not city:
+        return False
+    c = city.lower().replace('í', 'i').strip()
+    return c in {'marilia', 'mar?lia', 'marília'.lower().replace('í', 'i')}
+
+
 TOCA_SELECT_FIELDS = (
     "id,titulo,tipo_imovel,cidade,bairro_nome,endereco,nome_edificio,"
     "valor,valor_aluguel,dormitorios,banheiros,suites,a_construida,"
@@ -30,6 +39,7 @@ class TocaCollector(BaseCollector):
 
     async def fetch_all(self) -> list[dict[str, Any]]:
         all_items: list[dict[str, Any]] = []
+        filtered_other_city = 0
         headers = {
             "apikey": TOCA_ANON_KEY,
             "Authorization": f"Bearer {TOCA_ANON_KEY}",
@@ -55,6 +65,7 @@ class TocaCollector(BaseCollector):
                         "has_valid_photos": "eq.true",
                         "flag_mostra_site_ven": "eq.1",
                         "valor": "gt.0",
+                        "cidade": "ilike.*maril*",
                         "order": "updated_at.desc",
                         "offset": offset,
                         "limit": PAGE_SIZE,
@@ -72,7 +83,14 @@ class TocaCollector(BaseCollector):
                 if not items:
                     break
 
-                all_items.extend(items)
+                # Client-side safety net: drop any row whose city isn't Marília
+                kept = []
+                for row in items:
+                    if not _is_marilia(row.get('cidade')):
+                        filtered_other_city += 1
+                        continue
+                    kept.append(row)
+                all_items.extend(kept)
                 logger.info(
                     f"[toca] Page {page + 1}: {len(items)} items "
                     f"(total so far: {len(all_items)})"
@@ -84,7 +102,11 @@ class TocaCollector(BaseCollector):
                 if total and offset >= total:
                     break
 
-        logger.info(f"[toca] Total fetched: {len(all_items)} items")
+        logger.info(
+            f"[toca] Total fetched: {len(all_items)} items "
+            f"(filtered_other_city={filtered_other_city})"
+        )
+        self.stats['filtered_other_city'] = filtered_other_city
         return all_items
 
     def extract_source_id(self, item: dict[str, Any]) -> str:

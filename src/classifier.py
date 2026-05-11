@@ -116,27 +116,44 @@ def run_classifier() -> dict[str, int]:
 
         logger.info(f"[classifier] Processing {len(listings)} active listings")
 
-        # Classify and group by tier for batch updates
-        by_tier: dict[str, list[int]] = {}
+        # Classify and group by (tier, is_mcmv) for batch updates
+        by_payload: dict[tuple[str, bool], list[int]] = {}
+        mcmv_count = 0
 
         for listing in listings:
             tier = classify_listing(listing, mcmv_max)
-            if tier:
-                by_tier.setdefault(tier, []).append(listing["id"])
-                stats["classified"] += 1
-            else:
+            if not tier:
                 stats["skipped"] += 1
+                continue
 
-        # Batch update: 1 query per tier (instead of 1 per listing)
-        for tier, ids in by_tier.items():
+            ptype = listing.get("property_type")
+            price = float(listing.get("sale_price") or 0)
+            built_area = float(listing.get("built_area") or 0)
+
+            is_mcmv = tier == "casa_mcmv" or (
+                ptype == "apartment"
+                and tier == "apto_economico"
+                and 0 < price <= mcmv_max
+                and 0 < built_area <= DEFAULT_MCMV_MAX_AREA
+            )
+
+            if is_mcmv:
+                mcmv_count += 1
+
+            by_payload.setdefault((tier, is_mcmv), []).append(listing["id"])
+            stats["classified"] += 1
+
+        for (tier, is_mcmv), ids in by_payload.items():
             for i in range(0, len(ids), 500):
                 batch_ids = ids[i:i + 500]
                 try:
                     db.table("listings").update(
-                        {"market_tier": tier}
+                        {"market_tier": tier, "is_mcmv": is_mcmv}
                     ).in_("id", batch_ids).execute()
                 except Exception:
                     logger.exception(f"[classifier] Failed batch update for tier {tier}")
+
+        logger.info(f"[classifier] is_mcmv set on {mcmv_count} listings")
 
         logger.info(
             f"[classifier] Done: {stats['classified']} classified, "

@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from postgrest.exceptions import APIError
+
 from src.config import SUPABASE_URL
 from src.db import get_client
 
@@ -84,22 +86,26 @@ def run_hunter() -> dict[str, int]:
             })
             stats["opportunities"] += 1
 
-        # Flush in batches of 100
+        migration_warned = False
         for i in range(0, len(opp_batch), 100):
             batch = opp_batch[i:i + 100]
             try:
                 db.table("opportunities").upsert(
                     batch, on_conflict="listing_id"
                 ).execute()
-            except Exception:
-                # Fallback: one by one
-                for item in batch:
-                    try:
-                        db.table("opportunities").upsert(
-                            item, on_conflict="listing_id"
-                        ).execute()
-                    except Exception:
-                        pass
+            except APIError as e:
+                code = getattr(e, "code", None) or (e.args[0] if e.args else "")
+                if "42P10" in str(code) or "42P10" in str(e):
+                    if not migration_warned:
+                        logger.error(
+                            "[hunter] UNIQUE(listing_id) ausente em opportunities. "
+                            "Aplique sql/013_data_quality_fixes.sql. Usando fallback insert/update."
+                        )
+                        migration_warned = True
+                    _fallback_upsert(db, batch)
+                else:
+                    logger.warning(f"[hunter] Upsert batch failed: {e}; tentando 1-a-1")
+                    _fallback_upsert(db, batch)
 
         logger.info(
             f"[hunter] Done: {stats['scored']} scored, "
@@ -124,6 +130,27 @@ def run_hunter() -> dict[str, int]:
         raise
 
     return stats
+
+
+def _fallback_upsert(db: Any, batch: list[dict]) -> None:
+    """Per-row update-or-insert when unique constraint is missing."""
+    for item in batch:
+        try:
+            existing = (
+                db.table("opportunities")
+                .select("id")
+                .eq("listing_id", item["listing_id"])
+                .limit(1)
+                .execute()
+            )
+            if existing.data:
+                db.table("opportunities").update(item).eq(
+                    "listing_id", item["listing_id"]
+                ).execute()
+            else:
+                db.table("opportunities").insert(item).execute()
+        except APIError:
+            continue
 
 
 def _get_market_context(db: Any) -> dict[str, float]:
@@ -282,29 +309,31 @@ def _score_listing(
 
     # --- Enriched features bonus (up to 10pts) ---
     features = listing.get("features") or {}
-    if isinstance(features, list):
+    if not isinstance(features, dict):
         features = {}
     enriched = features.get("_source") == "claude_haiku"
 
     enrich_score = 0
     if enriched:
-        # Infrastructure: +1 per item (max 4)
         infra = features.get("infraestrutura") or []
+        if not isinstance(infra, list):
+            infra = []
         enrich_score += min(len(infra), 4)
 
-        # Proximities: +1 per item (max 3)
         prox = features.get("proximidades") or []
+        if not isinstance(prox, list):
+            prox = []
         enrich_score += min(len(prox), 3)
 
-        # Zoning: residential = +2, mixed = +1
         zoning = (features.get("zoneamento") or "").lower()
         if "residencial" in zoning:
             enrich_score += 2
         elif "misto" in zoning:
             enrich_score += 1
 
-        # Flat terrain bonus
         terreno = features.get("caracteristicas_terreno") or []
+        if not isinstance(terreno, list):
+            terreno = []
         if any("plano" in str(t).lower() for t in terreno):
             enrich_score += 1
 

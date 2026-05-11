@@ -10,6 +10,7 @@ import { MarketBenchmarks } from './components/MarketBenchmarks'
 import { PriceTrend } from './components/PriceTrend'
 import { DecisionPanel } from './components/DecisionPanel'
 import { ViabilityCalculator } from './components/ViabilityCalculator'
+import { DataHealth } from './components/DataHealth'
 import { Sidebar, type Page } from './components/Sidebar'
 import { FilterProvider, useFilters } from './contexts/FilterContext'
 import { useFilteredStats } from './hooks/useFilteredData'
@@ -34,6 +35,7 @@ const PAGE_TITLES: Record<Page, { title: string; subtitle: string }> = {
   viability: { title: 'Calculadora de Viabilidade', subtitle: 'Simule projetos e calcule retorno' },
   market: { title: 'Analise de Mercado', subtitle: 'Graficos, tendencias e benchmarks' },
   opportunities: { title: 'Oportunidades', subtitle: 'Melhores terrenos ranqueados por score' },
+  'data-health': { title: 'Saude dos Dados', subtitle: 'Status do pipeline e qualidade do dataset' },
 }
 
 function Dashboard() {
@@ -173,6 +175,9 @@ function Dashboard() {
 
           {/* OPPORTUNITIES PAGE */}
           {activePage === 'opportunities' && <OpportunitiesTable />}
+
+          {/* DATA HEALTH PAGE */}
+          {activePage === 'data-health' && <DataHealth />}
         </main>
 
         {/* Footer */}
