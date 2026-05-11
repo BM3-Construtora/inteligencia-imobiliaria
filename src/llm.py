@@ -139,24 +139,6 @@ def batch_normalize_neighborhoods(names: list[str]) -> dict[str, str]:
     return result if isinstance(result, dict) else {}
 
 
-def generate_market_report(data: dict[str, Any]) -> Optional[str]:
-    """Generate a weekly market report in Portuguese."""
-    prompt = (
-        "Voce e um analista imobiliario especialista em Marilia-SP. "
-        "Gere um resumo executivo COMPLETO para um construtor que quer comprar terrenos para MCMV. "
-        "3 secoes obrigatorias:\n\n"
-        "TENDENCIAS: O que mudou nos precos? Quais bairros se destacaram?\n"
-        "OPORTUNIDADES: Quais os 3 melhores terrenos disponiveis?\n"
-        "RECOMENDACAO: Comprar agora ou esperar? Qual bairro focar?\n\n"
-        f"Dados: {json.dumps(data, ensure_ascii=False)[:2500]}\n\n"
-        "REGRAS: Sem markdown. Sem asteriscos. Sem bullet points. "
-        "Texto corrido em portugues informal. Maximo 600 palavras. "
-        "Comece direto pela analise, sem introducao."
-    )
-
-    return _generate(prompt, max_tokens=8000)
-
-
 def score_opportunity(listing_data: dict[str, Any], numeric_score: float) -> Optional[dict[str, Any]]:
     """Get LLM second opinion on a land opportunity."""
     prompt = f"""Avalie este terreno para construção MCMV em Marília-SP:

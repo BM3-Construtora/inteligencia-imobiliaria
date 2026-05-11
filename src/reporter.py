@@ -7,7 +7,56 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.db import get_client
-from src.llm import generate_market_report, GEMINI_API_KEY
+
+
+_TIER_LABEL = {
+    "terreno_economico": "econômico",
+    "terreno_medio": "médio",
+    "terreno_grande": "grande",
+    "terreno_premium": "premium",
+}
+
+
+def _fmt_price(v: Any) -> str:
+    if not v:
+        return "?"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "?"
+    if n >= 1_000_000:
+        return f"R${n/1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"R${n/1000:.0f}k"
+    return f"R${n:.0f}"
+
+
+def _fmt_area(v: Any) -> str:
+    if not v:
+        return "?"
+    try:
+        return f"{float(v):.0f}m²"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _short_neigh(name: str, max_len: int = 28) -> str:
+    if not name:
+        return "?"
+    n = (
+        name.replace("Residencial ", "Res. ")
+        .replace("Jardim ", "Jd. ")
+        .replace("Parque ", "Pq. ")
+        .replace("Loteamento ", "Lot. ")
+        .replace("Núcleo Habitacional ", "N.H. ")
+        .replace("Nucleo Habitacional ", "N.H. ")
+        .replace("Distrito ", "Dist. ")
+        .replace("Vila ", "Vl. ")
+        .replace("Conjunto ", "Conj. ")
+        .replace("Habitacional ", "Hab. ")
+        .replace("Fazenda ", "Faz. ")
+    )
+    return n if len(n) <= max_len else n[: max_len - 1] + "…"
 
 logger = logging.getLogger(__name__)
 
@@ -26,29 +75,11 @@ def run_weekly_report() -> dict[str, int]:
 
     try:
         data = _gather_report_data(db)
-
-        report_text = None
-        if GEMINI_API_KEY:
-            report_text = generate_market_report(data)
-
-        # Fallback to static report if LLM fails or is not available
-        if not report_text:
-            report_text = _build_static_report(data)
-
+        report_text = _build_report(data)
         stats["generated"] = 1
 
         if report_text:
-            # Add header
-            today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
-            full_message = (
-                f"*RELATORIO SEMANAL — MariliaBot*\n"
-                f"_{today}_\n\n"
-                f"{report_text}\n\n"
-                f"---\n"
-                f"_Dados de {data['total_listings']} imoveis em {data['total_neighborhoods']} bairros_"
-            )
-
-            _send_telegram(full_message)
+            _send_telegram(report_text)
             stats["sent"] = 1
             logger.info("[reporter] Weekly report sent")
 
@@ -162,82 +193,64 @@ def _gather_report_data(db: Any) -> dict[str, Any]:
     }
 
 
-def _build_static_report(data: dict[str, Any]) -> str:
-    """Build a static report without LLM (fallback)."""
-    lines = []
+def _build_report(data: dict[str, Any]) -> str:
+    """Build a compact weekly report (HTML parse mode)."""
+    today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    snap = data.get("land_snapshot", {}) or {}
+    lines: list[str] = []
 
-    # --- Market overview ---
-    snap = data.get("land_snapshot", {})
-    lines.append("MERCADO DE TERRENOS")
-    lines.append(f"Total: {data['total_land']} terrenos ativos")
-    if snap:
-        avg = snap.get("avg_price")
-        med = snap.get("median_price")
-        if avg:
-            lines.append(f"Preco medio: R$ {float(avg):,.0f}")
-        if med:
-            lines.append(f"Preco mediano: R$ {float(med):,.0f}")
+    lines.append(f"<b>📊 Semanal {today}</b>")
 
-    # --- SINAPI + macro ---
-    indices = data.get("indices", {})
-    sinapi = indices.get("sinapi_custo_m2")
-    demanda_f2 = indices.get("demanda_mcmv_faixa2_anual")
-    deficit = indices.get("deficit_habitacional_estimado")
-    if sinapi or demanda_f2:
+    # --- One-line market summary ---
+    parts = [f"{data['total_land']} terrenos"]
+    if snap.get("median_price"):
+        parts.append(f"mediano {_fmt_price(snap['median_price'])}")
+    if snap.get("avg_price_m2"):
+        parts.append(f"R${float(snap['avg_price_m2']):,.0f}/m²".replace(",", "."))
+    if snap.get("avg_days_on_market"):
+        parts.append(f"{int(float(snap['avg_days_on_market']))}d no mercado")
+    lines.append(" · ".join(parts))
+
+    # --- Top 5 opportunities with URL ---
+    opps = data.get("top_opportunities", []) or []
+    opps_with_url = [o for o in opps if o.get("url")][:5]
+    if not opps_with_url:
+        opps_with_url = opps[:5]
+
+    if opps_with_url:
         lines.append("")
-        lines.append("INDICADORES")
-        if sinapi:
-            lines.append(f"SINAPI/m2 (SP): R$ {float(sinapi):,.0f}")
-        if demanda_f2:
-            lines.append(f"Demanda MCMV F2: {int(demanda_f2)} un/ano")
-        if deficit:
-            lines.append(f"Deficit habitacional: {int(deficit)} unidades")
+        lines.append("<b>🏆 TOP 5</b>")
+        for i, o in enumerate(opps_with_url, 1):
+            neigh = _short_neigh(o.get("neighborhood") or "?")
+            price = _fmt_price(o.get("price"))
+            area = _fmt_area(o.get("area"))
+            mcmv = " · MCMV" if o.get("is_mcmv") else ""
+            tier_raw = o.get("tier") or ""
+            tier_label = _TIER_LABEL.get(tier_raw, "")
+            tier = f" · {tier_label}" if tier_label else ""
+            score = f"{float(o['score']):.0f}" if o.get("score") is not None else "?"
+            url = o.get("url")
+            if url:
+                lines.append(
+                    f"{i}. <a href=\"{url}\">{neigh}</a> · {price} · {area}{mcmv}{tier} · <b>{score}</b>"
+                )
+            else:
+                lines.append(f"{i}. {neigh} · {price} · {area}{mcmv}{tier} · <b>{score}</b>")
 
-    # --- Top opportunities ---
-    lines.append("")
-    lines.append("TOP 10 OPORTUNIDADES DA SEMANA")
-    for i, o in enumerate(data.get("top_opportunities", []), 1):
-        price = f"R$ {float(o['price']):,.0f}" if o.get("price") else "?"
-        area = f"{float(o['area']):,.0f}m2" if o.get("area") else "?"
-        mcmv = " [MCMV]" if o.get("is_mcmv") else ""
-        tier = f" ({o['tier']})" if o.get("tier") else ""
-        lines.append(f"{i}. {o['neighborhood']} — {price} | {area}{mcmv}{tier}")
-        lines.append(f"   Score: {o['score']:.0f}/100")
-        if o.get("url"):
-            lines.append(f"   {o['url']}")
-
-    # --- Viable projects ---
-    viable = data.get("viable_projects", [])
-    if viable:
-        lines.append("")
-        lines.append("PROJETOS VIAVEIS")
-        for v in viable[:3]:
-            l = v.get("listing")
-            if isinstance(l, list):
-                l = l[0] if l else {}
-            outputs = v.get("outputs", {})
-            neigh = l.get("neighborhood", "?") if l else "?"
-            margem = outputs.get("margem_liquida_pct", 0)
-            vgv = outputs.get("vgv", 0)
-            lines.append(f"- {v['scenario']} em {neigh}: margem {margem:.1f}%, VGV R$ {vgv:,.0f}")
-
-    # --- Hot neighborhoods ---
-    hot = data.get("hot_neighborhoods", [])
+    # --- Hot neighborhoods (1 line) ---
+    hot = data.get("hot_neighborhoods", []) or []
     if hot:
-        lines.append("")
-        lines.append("BAIRROS MAIS QUENTES")
-        for n in hot:
-            heat = n.get("market_heat_score", 0)
-            absorb = n.get("absorption_rate")
-            abs_str = f", absorção {absorb:.1f}%" if absorb else ""
-            lines.append(f"- {n['name']}: calor {heat}/100{abs_str}")
+        names = ", ".join(n["name"] for n in hot[:3] if n.get("name"))
+        if names:
+            lines.append("")
+            lines.append(f"🔥 Quentes: {names}")
 
-    # --- Neighborhoods ---
-    lines.append("")
-    lines.append("BAIRROS COM MAIS TERRENOS")
-    for n in data.get("top_neighborhoods", []):
-        pm2 = f"R$ {float(n['avg_price_m2_land']):,.0f}/m2" if n.get("avg_price_m2_land") else "?"
-        lines.append(f"- {n['name']}: {n['total_land']} terrenos ({pm2})")
+    # --- Focus pick ---
+    if opps_with_url:
+        top = opps_with_url[0]
+        focus_name = _short_neigh(top.get("neighborhood") or "")
+        if focus_name and focus_name != "?":
+            lines.append(f"💡 Foco: {focus_name}")
 
     return "\n".join(lines)
 
@@ -258,8 +271,8 @@ def _send_telegram(text: str) -> None:
     resp = httpx.post(url, json={
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False,
     }, timeout=15)
     resp.raise_for_status()
 
