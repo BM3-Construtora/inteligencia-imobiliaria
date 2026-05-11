@@ -13,8 +13,68 @@ ALTER TABLE neighborhoods
     ALTER COLUMN avg_risk_score  TYPE NUMERIC(6, 2),
     ALTER COLUMN months_of_inventory TYPE NUMERIC(10, 2);
 
+-- price_per_m2 widening: drop dependent views, alter, recreate
+DROP VIEW IF EXISTS property_price_timeline;
+DROP VIEW IF EXISTS property_summary;
+
 ALTER TABLE listings
     ALTER COLUMN price_per_m2 TYPE NUMERIC(12, 2);
+
+CREATE OR REPLACE VIEW property_price_timeline AS
+SELECT
+  COALESCE(l.canonical_listing_id, l.id) AS property_id,
+  l.id AS listing_id,
+  l.source,
+  l.source_id,
+  l.sale_price AS current_price,
+  l.price_per_m2 AS current_price_m2,
+  l.total_area,
+  l.neighborhood,
+  l.property_type,
+  l.title,
+  l.url,
+  l.first_seen_at,
+  l.last_seen_at,
+  l.is_active,
+  (
+    SELECT json_agg(json_build_object(
+      'old_price', ph.old_price,
+      'new_price', ph.new_price,
+      'change_pct', ph.change_pct,
+      'changed_at', ph.detected_at,
+      'source', ph.source
+    ) ORDER BY ph.detected_at DESC)
+    FROM price_history ph WHERE ph.listing_id = l.id
+  ) AS price_changes
+FROM listings l
+WHERE l.sale_price IS NOT NULL AND l.sale_price > 0
+ORDER BY COALESCE(l.canonical_listing_id, l.id), l.source;
+
+CREATE OR REPLACE VIEW property_summary AS
+SELECT
+  COALESCE(l.canonical_listing_id, l.id) AS property_id,
+  MIN(l.neighborhood) AS neighborhood,
+  MIN(l.property_type) AS property_type,
+  MAX(l.total_area) AS total_area,
+  COUNT(*) AS num_sources,
+  json_agg(DISTINCT l.source) AS sources,
+  MIN(l.sale_price) AS min_price,
+  MAX(l.sale_price) AS max_price,
+  AVG(l.sale_price)::NUMERIC(14,2) AS avg_price,
+  MAX(l.sale_price) - MIN(l.sale_price) AS price_spread,
+  MIN(l.first_seen_at) AS first_seen,
+  MAX(l.last_seen_at) AS last_seen,
+  BOOL_OR(l.is_active) AS is_active,
+  json_agg(json_build_object(
+    'source', l.source,
+    'price', l.sale_price,
+    'url', l.url,
+    'listing_id', l.id,
+    'is_active', l.is_active
+  )) AS listings
+FROM listings l
+WHERE l.sale_price IS NOT NULL AND l.sale_price > 0
+GROUP BY COALESCE(l.canonical_listing_id, l.id);
 
 -- ============================================================
 -- 2. Quarantine flag + reason on listings (validation fail)
