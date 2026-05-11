@@ -17,6 +17,16 @@ from src.db import get_client
 
 logger = logging.getLogger(__name__)
 
+# ============================================================
+# Calibration assumptions (interior SP, projeto popular/MCMV)
+# Source: cross-check vs BM3 historical data when company_projects is populated
+# ============================================================
+COMMISSION_PCT = 4.0              # Corretagem real BR (4% do VGV)
+TYPICAL_SALES_MONTHS = 18         # Prazo médio de venda
+WORKING_CAPITAL_ANNUAL_PCT = 12.0 # Custo capital de giro (12% a.a.)
+REWORK_BUFFER_PCT = 5.0           # Buffer de retrabalho em obra residencial
+TETO_VENDA_DISCOUNT = 0.95        # Mercado raramente paga teto cheio
+
 # BDI (Benefícios e Despesas Indiretas) — padrão MCMV construtoras pequenas/médias
 BDI_PCT = 0.22
 
@@ -112,12 +122,92 @@ def _get_sinapi_cost() -> float:
         return 1920.0
 
 
+def calc_cost_breakdown(
+    land_cost: float,
+    area_total: float,
+    sinapi_per_m2: float,
+    units: int,
+    custo_multiplier: float = 1.0,
+    ret_pct: float = 0.04,
+    prazo_venda_meses: int = TYPICAL_SALES_MONTHS,
+    preco_venda_unidade: float = 0.0,
+) -> dict[str, float]:
+    """Pure cost-breakdown calculation. No I/O, no DB, no LLM.
+
+    Args:
+        land_cost: Total price paid for land (R$).
+        area_total: Total built area across all units (m²).
+        sinapi_per_m2: SINAPI construction cost per m² (R$).
+        units: Number of units in the project.
+        custo_multiplier: Faixa-specific cost multiplier (e.g. 0.85, 1.0, 1.15).
+        ret_pct: RET (tax) percentage applied on VGV (0.01 or 0.04).
+        prazo_venda_meses: Sales horizon in months for working-capital cost.
+        preco_venda_unidade: Unit sale price (R$). If 0, VGV-dependent fields stay 0.
+
+    Returns:
+        Dict with all cost line items, VGV, lucro, margem, ROI.
+    """
+    custo_m2 = sinapi_per_m2 * custo_multiplier
+    custo_construcao_base = area_total * custo_m2
+    custo_bdi = custo_construcao_base * BDI_PCT
+    custo_construcao = custo_construcao_base + custo_bdi
+    custo_infra = custo_construcao_base * CUSTO_INFRA_PCT
+    custo_projetos = custo_construcao_base * CUSTO_PROJETOS_PCT
+    custo_retrabalho = custo_construcao_base * (REWORK_BUFFER_PCT / 100.0)
+    custo_total_obra = custo_construcao + custo_infra + custo_projetos + custo_retrabalho
+
+    vgv = units * preco_venda_unidade
+    custo_marketing = vgv * CUSTO_MARKETING_PCT
+    custo_admin = vgv * CUSTO_ADMIN_PCT
+    custo_comissao = vgv * (COMMISSION_PCT / 100.0)
+    custo_impostos = vgv * ret_pct
+    custo_financeiro_pct = (WORKING_CAPITAL_ANNUAL_PCT / 100.0) * (prazo_venda_meses / 12.0)
+    custo_financeiro = (land_cost + custo_total_obra) * custo_financeiro_pct
+    custos_operacionais = (
+        custo_marketing + custo_admin + custo_comissao
+        + custo_impostos + custo_financeiro
+    )
+
+    investimento_total = land_cost + custo_total_obra + custos_operacionais
+    lucro_bruto = vgv - land_cost - custo_total_obra
+    lucro_liquido = vgv - investimento_total
+    margem_bruta = (lucro_bruto / vgv * 100) if vgv > 0 else 0.0
+    margem_liquida = (lucro_liquido / vgv * 100) if vgv > 0 else 0.0
+    roi = (lucro_liquido / investimento_total * 100) if investimento_total > 0 else 0.0
+
+    return {
+        "custo_m2": custo_m2,
+        "custo_terreno": land_cost,
+        "custo_construcao_base": custo_construcao_base,
+        "custo_bdi": custo_bdi,
+        "custo_construcao": custo_construcao,
+        "custo_infra": custo_infra,
+        "custo_projetos": custo_projetos,
+        "custo_retrabalho": custo_retrabalho,
+        "custo_total_obra": custo_total_obra,
+        "custo_marketing": custo_marketing,
+        "custo_admin": custo_admin,
+        "custo_comissao": custo_comissao,
+        "custo_impostos": custo_impostos,
+        "custo_financeiro": custo_financeiro,
+        "custos_operacionais": custos_operacionais,
+        "investimento_total": investimento_total,
+        "vgv": vgv,
+        "lucro_bruto": lucro_bruto,
+        "lucro_liquido": lucro_liquido,
+        "margem_bruta_pct": margem_bruta,
+        "margem_liquida_pct": margem_liquida,
+        "roi_pct": roi,
+    }
+
+
 def simulate_project(
     land_price: float,
     land_area: float,
     faixa_key: str = "mcmv_faixa2",
     sinapi_cost: float | None = None,
     neighborhood_avg_price_m2: float | None = None,
+    prazo_venda_meses: int = TYPICAL_SALES_MONTHS,
 ) -> dict[str, Any] | None:
     """Simulate a construction project and return full financial analysis.
 
@@ -153,14 +243,17 @@ def simulate_project(
     custo_construcao = custo_construcao_base + custo_bdi
     custo_infra = custo_construcao_base * CUSTO_INFRA_PCT
     custo_projetos = custo_construcao_base * CUSTO_PROJETOS_PCT
+    # Retrabalho médio em obra residencial (5% sobre construção bruta)
+    custo_retrabalho = custo_construcao_base * (REWORK_BUFFER_PCT / 100.0)
 
-    custo_total_obra = custo_construcao + custo_infra + custo_projetos
+    custo_total_obra = custo_construcao + custo_infra + custo_projetos + custo_retrabalho
 
     # --- Revenue ---
     # MCMV: preço de venda = teto da faixa (valor fixo financiável pela Caixa).
-    # Não varia com mercado — comprador paga o teto com subsídio + financiamento.
+    # Aplicamos desconto TETO_VENDA_DISCOUNT — mercado raramente paga teto cheio.
     # Para casa_padrao (não-MCMV), usa mercado como referência.
-    preco_venda_unidade = faixa["valor_max_imovel"]
+    preco_teto = faixa["valor_max_imovel"]
+    preco_venda_unidade = preco_teto * TETO_VENDA_DISCOUNT
     if faixa_key == "casa_padrao" and neighborhood_avg_price_m2 and neighborhood_avg_price_m2 > 0:
         preco_mercado = neighborhood_avg_price_m2 * unidade_area
         preco_venda_unidade = min(preco_venda_unidade, preco_mercado * 1.05)
@@ -170,10 +263,18 @@ def simulate_project(
     # --- Operational costs (% of VGV) ---
     custo_marketing = vgv * CUSTO_MARKETING_PCT
     custo_admin = vgv * CUSTO_ADMIN_PCT
+    # Comissão de venda (corretagem) — 4% sobre VGV
+    custo_comissao = vgv * (COMMISSION_PCT / 100.0)
     # Impostos via RET: 1% (Faixa 1) ou 4% (demais) — vs 9.25% regime normal
     ret_pct = faixa.get("ret_pct", 0.04)
     custo_impostos = vgv * ret_pct
-    custos_operacionais = custo_marketing + custo_admin + custo_impostos
+    # Custo financeiro: capital de giro durante venda (12% a.a. pro-rata pelo prazo)
+    custo_financeiro_pct = (WORKING_CAPITAL_ANNUAL_PCT / 100.0) * (prazo_venda_meses / 12.0)
+    custo_financeiro = (custo_terreno + custo_total_obra) * custo_financeiro_pct
+    custos_operacionais = (
+        custo_marketing + custo_admin + custo_comissao
+        + custo_impostos + custo_financeiro
+    )
 
     # --- Totals ---
     investimento_total = custo_terreno + custo_total_obra + custos_operacionais
@@ -239,6 +340,12 @@ def simulate_project(
             "bdi_pct": BDI_PCT,
             "unidade_area_m2": unidade_area,
             "preco_venda_unidade": round(preco_venda_unidade),
+            "preco_teto_faixa": round(preco_teto),
+            "teto_discount": TETO_VENDA_DISCOUNT,
+            "prazo_venda_meses": prazo_venda_meses,
+            "comissao_venda_pct": COMMISSION_PCT,
+            "custo_financeiro_pct": round(custo_financeiro_pct * 100, 2),
+            "retrabalho_buffer_pct": REWORK_BUFFER_PCT,
         },
         "outputs": {
             "unidades": unidades,
@@ -247,9 +354,12 @@ def simulate_project(
             "custo_construcao": round(custo_construcao),
             "custo_infra": round(custo_infra),
             "custo_projetos": round(custo_projetos),
+            "custo_retrabalho": round(custo_retrabalho),
             "custo_total_obra": round(custo_total_obra),
             "custo_marketing": round(custo_marketing),
             "custo_admin": round(custo_admin),
+            "custo_comissao": round(custo_comissao),
+            "custo_financeiro": round(custo_financeiro),
             "custo_impostos": round(custo_impostos),
             "investimento_total": round(investimento_total),
             "vgv": round(vgv),

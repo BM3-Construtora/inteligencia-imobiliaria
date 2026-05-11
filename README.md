@@ -199,7 +199,33 @@ python -m src.main creci         # Benchmarks CRECI-SP
 python -m src.main notify        # Alertas Telegram
 python -m src.main alerts        # Saved searches + notificacao
 python -m src.main report        # Relatorio semanal executivo
+
+# Manutencao / Operacao
+python -m src.main canon-bairros # Canonicaliza bairros existentes (one-shot LLM)
+
+# Company projects (CLI, sem dashboard)
+python -m src.main projects add --name "Casa Aviacao 1" \
+    --neighborhood "Aviacao" --project-type mcmv_faixa2 --units 1 \
+    --land-cost 120000 --construction-cost-projected 180000 \
+    --sale-price-per-unit 350000 --construction-months 8
+python -m src.main projects list
+python -m src.main projects list --status construction
+python -m src.main projects update --id 3 --status construction
+python -m src.main projects set-outcome --id 3 \
+    --revenue-actual 360000 --margin-actual-pct 18.5 --completed-at 2026-08-01
 ```
+
+### Variaveis de Ambiente
+
+Alem das ja documentadas (Supabase, Telegram, etc.), o backfill de bairros usa:
+
+- `GEMINI_API_KEY` — obrigatorio para `canon-bairros` e demais agentes LLM
+- `GEMINI_MODEL` — opcional (default `gemini-2.5-flash`)
+
+### Tests
+
+A pasta `tests/` contem testes unitarios e de integracao para os modulos principais.
+Rode com `pytest` na raiz do projeto.
 
 ## Banco de Dados (Supabase)
 

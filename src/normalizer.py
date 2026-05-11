@@ -598,16 +598,21 @@ def run_normalizer() -> dict[str, int]:
                 logger.exception("[normalizer] Failed to mark batch as processed")
 
         # Phase 4: Deactivate stale listings (not seen in 7+ days)
-        stale_count = _deactivate_stale_listings(db)
-        stats["deactivated"] = stale_count
-        if stale_count > 0:
-            logger.info(f"[normalizer] Deactivated {stale_count} stale listings")
+        stale_result = _deactivate_stale_listings(db)
+        stats["deactivated"] = stale_result.get("deactivated", 0)
+        stats["siblings_kept_alive"] = stale_result.get("siblings_kept_alive", 0)
+        if stats["deactivated"] > 0 or stats["siblings_kept_alive"] > 0:
+            logger.info(
+                f"[normalizer] Deactivated {stats['deactivated']} stale listings, "
+                f"kept {stats['siblings_kept_alive']} alive via canonical siblings"
+            )
 
         logger.info(
             f"[normalizer] Done: {stats['processed']} processed, "
             f"{stats['created']} created, {stats['updated']} updated, "
             f"{stats['price_changes']} price changes, {stats['failed']} failed, "
-            f"{stats.get('deactivated', 0)} deactivated"
+            f"{stats.get('deactivated', 0)} deactivated, "
+            f"{stats.get('siblings_kept_alive', 0)} siblings kept alive"
         )
         _finish_run(db, run_id, "completed", stats)
 
@@ -674,24 +679,128 @@ def _detect_price_change(
     )
 
 
-def _deactivate_stale_listings(db: Any) -> int:
-    """Deactivate listings not seen in last 7 days (proxy: removed from portal = sold)."""
+def _deactivate_stale_listings(db: Any) -> dict[str, int]:
+    """Deactivate listings not seen in last 7 days, respecting canonical siblings.
+
+    A listing only gets deactivated when no sibling (same canonical_listing_id,
+    or pointing to it) has been seen within the cutoff. If a sibling is alive,
+    the stale listing's last_seen_at is bumped to the sibling's max and it stays
+    active — prevents false-positive "sold" signals when one portal drops the ad
+    but another keeps it live.
+    """
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     now = datetime.now(timezone.utc).isoformat()
 
+    result_stats = {"deactivated": 0, "siblings_kept_alive": 0}
+
     try:
-        result = (
+        # 1. Fetch candidates that would be deactivated
+        stale_resp = (
             db.table("listings")
-            .update({"is_active": False, "deactivated_at": now})
+            .select("id, canonical_listing_id, last_seen_at")
             .eq("is_active", True)
             .lt("last_seen_at", cutoff)
             .execute()
         )
-        return len(result.data) if result.data else 0
+        stale = stale_resp.data or []
+        if not stale:
+            return result_stats
+
+        # 2. Collect all canonical_ids in play (own id if it IS the canonical,
+        #    or canonical_listing_id if it points elsewhere)
+        canonical_ids: set[Any] = set()
+        for row in stale:
+            cid = row.get("canonical_listing_id") or row["id"]
+            canonical_ids.add(cid)
+
+        # 3. Fetch the freshest last_seen_at across the canonical family.
+        #    A family member is any listing whose id ∈ canonical_ids OR
+        #    whose canonical_listing_id ∈ canonical_ids.
+        family_rows: list[dict] = []
+        canonical_list = list(canonical_ids)
+        CHUNK = 200
+        for i in range(0, len(canonical_list), CHUNK):
+            chunk = canonical_list[i:i + CHUNK]
+            try:
+                by_id = (
+                    db.table("listings")
+                    .select("id, canonical_listing_id, last_seen_at, is_active")
+                    .in_("id", chunk)
+                    .execute()
+                )
+                family_rows.extend(by_id.data or [])
+            except Exception:
+                logger.exception("[normalizer] Failed family lookup by id")
+            try:
+                by_canon = (
+                    db.table("listings")
+                    .select("id, canonical_listing_id, last_seen_at, is_active")
+                    .in_("canonical_listing_id", chunk)
+                    .execute()
+                )
+                family_rows.extend(by_canon.data or [])
+            except Exception:
+                logger.exception("[normalizer] Failed family lookup by canonical_listing_id")
+
+        # 4. Build canonical_id → max(last_seen_at)
+        max_seen: dict[Any, str] = {}
+        for row in family_rows:
+            cid = row.get("canonical_listing_id") or row["id"]
+            ls = row.get("last_seen_at")
+            if not ls:
+                continue
+            cur = max_seen.get(cid)
+            if cur is None or ls > cur:
+                max_seen[cid] = ls
+
+        # 5. Partition stale candidates
+        to_deactivate: list[Any] = []
+        to_bump: list[tuple[Any, str]] = []
+        for row in stale:
+            cid = row.get("canonical_listing_id") or row["id"]
+            fresh = max_seen.get(cid)
+            if fresh and fresh >= cutoff:
+                to_bump.append((row["id"], fresh))
+            else:
+                to_deactivate.append(row["id"])
+
+        # 6. Deactivate the truly stale
+        if to_deactivate:
+            for i in range(0, len(to_deactivate), 500):
+                chunk = to_deactivate[i:i + 500]
+                try:
+                    upd = (
+                        db.table("listings")
+                        .update({"is_active": False, "deactivated_at": now})
+                        .in_("id", chunk)
+                        .execute()
+                    )
+                    result_stats["deactivated"] += len(upd.data) if upd.data else len(chunk)
+                except Exception:
+                    logger.exception("[normalizer] Failed to deactivate stale chunk")
+
+        # 7. Bump last_seen_at for siblings-alive cases.
+        #    Group by target timestamp to minimize round trips.
+        if to_bump:
+            by_ts: dict[str, list[Any]] = {}
+            for lid, ts in to_bump:
+                by_ts.setdefault(ts, []).append(lid)
+            for ts, ids in by_ts.items():
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i + 500]
+                    try:
+                        db.table("listings").update(
+                            {"last_seen_at": ts}
+                        ).in_("id", chunk).execute()
+                        result_stats["siblings_kept_alive"] += len(chunk)
+                    except Exception:
+                        logger.exception("[normalizer] Failed to bump sibling-alive chunk")
+
+        return result_stats
     except Exception:
         logger.exception("[normalizer] Failed to deactivate stale listings")
-        return 0
+        return result_stats
 
 
 def _finish_run(
@@ -710,7 +819,11 @@ def _finish_run(
         "items_created": stats["created"],
         "items_updated": stats["updated"],
         "items_failed": stats["failed"],
-        "metadata": {"price_changes": stats["price_changes"]},
+        "metadata": {
+            "price_changes": stats["price_changes"],
+            "deactivated": stats.get("deactivated", 0),
+            "siblings_kept_alive": stats.get("siblings_kept_alive", 0),
+        },
     }
     if error:
         update["error_message"] = error[:1000]

@@ -5,8 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from src.db import get_client
+
+
+def _today_sp() -> str:
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +136,8 @@ def _calc_snapshot(
     n = len(prices)
     median = prices[n // 2] if n % 2 else (prices[n // 2 - 1] + prices[n // 2]) / 2
 
-    # Count new listings (first_seen today)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Count new listings (first_seen today, São Paulo TZ for snapshot_date)
+    today = _today_sp()
     now = datetime.now(timezone.utc)
     new_count = sum(
         1 for r in rows

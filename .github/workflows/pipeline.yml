@@ -2,9 +2,9 @@ name: MaríliaBot Pipeline
 
 on:
   schedule:
-    # Roda todo dia às 6h (horário de Brasília = 9h UTC)
+    # 06:00 BRT = 09:00 UTC
     - cron: '0 9 * * *'
-  workflow_dispatch:  # Permite rodar manualmente
+  workflow_dispatch:
 
 env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -15,85 +15,284 @@ env:
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   MAX_PAGES_PER_SPIDER: '20'
+  CITY_FOCUS: ${{ vars.CITY_FOCUS }}
 
 jobs:
-  pipeline:
+  collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
+    timeout-minutes: 30
+    continue-on-error: false
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
+      - run: pip install -e .
+      - name: Collect APIs
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 2
+          command: python -m src.main collect uniao toca
+      - name: Collect scrapers
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 25
+          max_attempts: 2
+          command: python -m src.main collect vivareal chavesnamao imovelweb zapimoveis
 
-      - name: Install dependencies
-        run: pip install -e .
+  normalize:
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 18
+          max_attempts: 2
+          command: python -m src.main normalize
 
-      # Phase 1: Collect (6 sources)
-      - name: Collect — APIs (União + Toca)
-        run: python -m src.main collect uniao toca
-        continue-on-error: true
+  classify:
+    needs: normalize
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 12
+          max_attempts: 2
+          command: python -m src.main classify
 
-      - name: Collect — HTML scrapers
-        run: python -m src.main collect vivareal chavesnamao imovelweb zapimoveis
-        continue-on-error: true
+  dedup:
+    needs: classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 2
+          command: python -m src.main dedup
 
-      # Phase 2: Normalize + Classify + Enrich
-      - name: Normalize (+ deactivate stale)
-        run: python -m src.main normalize
+  enrich:
+    needs: dedup
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    if: ${{ env.GEMINI_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 2
+          command: python -m src.main enrich-llm
 
-      - name: Classify
-        run: python -m src.main classify
+  analyst:
+    needs: dedup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 12
+          max_attempts: 2
+          command: python -m src.main analyze
 
-      - name: Enrich (LLM)
-        if: env.GEMINI_API_KEY != ''
-        run: python -m src.main enrich-llm
-        continue-on-error: true
+  trends:
+    needs: analyst
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 8
+          max_attempts: 2
+          command: python -m src.main trends
 
-      # Phase 3: Deduplicate
-      - name: Deduplicate
-        run: python -m src.main dedup
+  heat:
+    needs: trends
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 8
+          max_attempts: 2
+          command: python -m src.main heat
 
-      # Phase 4: Analyze + Intelligence
-      - name: Analyze
-        run: python -m src.main analyze
+  hunt:
+    needs: [analyst, enrich]
+    if: ${{ always() && needs.analyst.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 18
+          max_attempts: 2
+          command: python -m src.main hunt
 
-      - name: Trends
-        run: python -m src.main trends
+  score-llm:
+    needs: hunt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    if: ${{ env.GEMINI_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 12
+          max_attempts: 2
+          command: python -m src.main score-llm
 
-      - name: Sales Tracker
-        run: python -m src.main sales
-        continue-on-error: true
+  risk:
+    needs: hunt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    if: ${{ env.GEMINI_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 12
+          max_attempts: 2
+          command: python -m src.main risk
 
-      - name: Market Heat
-        run: python -m src.main heat
-        continue-on-error: true
+  viability:
+    needs: hunt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 12
+          max_attempts: 2
+          command: python -m src.main viability
 
-      # Phase 5: Score + Risk + Viability
-      - name: Hunt
-        run: python -m src.main hunt
+  comps:
+    needs: viability
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 8
+          max_attempts: 2
+          command: python -m src.main comps
 
-      - name: Score (LLM)
-        if: env.GEMINI_API_KEY != ''
-        run: python -m src.main score-llm
-        continue-on-error: true
-
-      - name: Risk Assessment
-        if: env.GEMINI_API_KEY != ''
-        run: python -m src.main risk
-        continue-on-error: true
-
-      - name: Viability
-        run: python -m src.main viability
-        continue-on-error: true
-
-      - name: Comparables
-        run: python -m src.main comps
-        continue-on-error: true
-
-      # Notificações movidas para weekly-report.yml (segunda-feira 9h BRT)
-      # Pipeline diário só coleta e processa dados silenciosamente
+  summary:
+    needs: [collect, normalize, classify, dedup, enrich, analyst, trends, heat, hunt, score-llm, risk, viability, comps]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build summary
+        run: |
+          mkdir -p out
+          {
+            echo "# MaríliaBot Pipeline Summary"
+            echo ""
+            echo "Run: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| Stage | Result |"
+            echo "|-------|--------|"
+            echo "| collect    | ${{ needs.collect.result }} |"
+            echo "| normalize  | ${{ needs.normalize.result }} |"
+            echo "| classify   | ${{ needs.classify.result }} |"
+            echo "| dedup      | ${{ needs.dedup.result }} |"
+            echo "| enrich     | ${{ needs.enrich.result }} |"
+            echo "| analyst    | ${{ needs.analyst.result }} |"
+            echo "| trends     | ${{ needs.trends.result }} |"
+            echo "| heat       | ${{ needs.heat.result }} |"
+            echo "| hunt       | ${{ needs.hunt.result }} |"
+            echo "| score-llm  | ${{ needs.score-llm.result }} |"
+            echo "| risk       | ${{ needs.risk.result }} |"
+            echo "| viability  | ${{ needs.viability.result }} |"
+            echo "| comps      | ${{ needs.comps.result }} |"
+          } > out/summary.md
+          cat out/summary.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-summary
+          path: out/summary.md

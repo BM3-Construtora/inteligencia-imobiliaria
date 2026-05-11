@@ -71,9 +71,44 @@ def run_hunter() -> dict[str, int]:
         if scored:
             stats["top_score"] = scored[0][1]
 
+        # --- Percentile calibration ---
+        # Collect all raw_scores, sort, then compute percentile per listing.
+        # Distribution snapshot is logged so the user can detect calibration drift.
+        all_scores = sorted([s for _, s, _ in scored])
+        total_scored = len(all_scores)
+        percentile_by_listing: dict[int, float] = {}
+        if total_scored > 0:
+            # Build rank lookup: percentile = (rank / total) * 100 where rank is
+            # the 1-based index of the score in the sorted ascending list.
+            # Equal scores get the same rank (highest position) — stable for ties.
+            for listing, score, _ in scored:
+                # Rank = number of scores <= this score (handles ties)
+                # Use bisect-like behavior: count items <= score
+                rank = 0
+                lo, hi = 0, total_scored
+                while lo < hi:
+                    mid = (lo + hi) // 2
+                    if all_scores[mid] <= score:
+                        lo = mid + 1
+                    else:
+                        hi = mid
+                rank = lo
+                pct = round((rank / total_scored) * 100, 2)
+                percentile_by_listing[listing["id"]] = pct
+
+            _log_score_distribution(all_scores)
+
         # Batch upsert opportunities
         opp_batch: list[dict] = []
+        history_batch: list[dict] = []
         for listing, score, breakdown in scored:
+            pct = percentile_by_listing.get(listing["id"])
+            history_batch.append({
+                "listing_id": listing["id"],
+                "raw_score": score,
+                "percentile": pct,
+                "score_breakdown": breakdown,
+            })
             if score < 30:
                 continue
 
@@ -83,19 +118,41 @@ def run_hunter() -> dict[str, int]:
                 "score": score,
                 "score_breakdown": breakdown,
                 "reason": reason,
+                "percentile_score": pct,
             })
             stats["opportunities"] += 1
+
+        # Flag controls whether new column / history table writes are attempted.
+        # If migration 020 is not applied we log once and skip the rest.
+        percentile_cols_available = True
+        history_table_available = True
 
         migration_warned = False
         for i in range(0, len(opp_batch), 100):
             batch = opp_batch[i:i + 100]
+            # Strip percentile_score if the column is unavailable
+            if not percentile_cols_available:
+                batch = [{k: v for k, v in row.items() if k != "percentile_score"} for row in batch]
             try:
                 db.table("opportunities").upsert(
                     batch, on_conflict="listing_id"
                 ).execute()
             except APIError as e:
                 code = getattr(e, "code", None) or (e.args[0] if e.args else "")
-                if "42P10" in str(code) or "42P10" in str(e):
+                msg = str(e)
+                if "PGRST204" in msg or "percentile_score" in msg:
+                    if percentile_cols_available:
+                        logger.warning(
+                            "[hunter] Coluna percentile_score ausente em opportunities. "
+                            "Aplique sql/020_hunter_score_history.sql. Pulando writes desta coluna."
+                        )
+                    percentile_cols_available = False
+                    batch = [{k: v for k, v in row.items() if k != "percentile_score"} for row in batch]
+                    try:
+                        db.table("opportunities").upsert(batch, on_conflict="listing_id").execute()
+                    except APIError:
+                        _fallback_upsert(db, batch)
+                elif "42P10" in str(code) or "42P10" in msg:
                     if not migration_warned:
                         logger.error(
                             "[hunter] UNIQUE(listing_id) ausente em opportunities. "
@@ -106,6 +163,24 @@ def run_hunter() -> dict[str, int]:
                 else:
                     logger.warning(f"[hunter] Upsert batch failed: {e}; tentando 1-a-1")
                     _fallback_upsert(db, batch)
+
+        # --- Hunter score history (series temporal) ---
+        if history_table_available and history_batch:
+            for i in range(0, len(history_batch), 200):
+                hbatch = history_batch[i:i + 200]
+                try:
+                    db.table("hunter_score_history").insert(hbatch).execute()
+                except APIError as e:
+                    msg = str(e)
+                    if "PGRST205" in msg or "hunter_score_history" in msg or "PGRST204" in msg:
+                        logger.warning(
+                            "[hunter] Tabela hunter_score_history ausente. "
+                            "Aplique sql/020_hunter_score_history.sql. Pulando histórico."
+                        )
+                        history_table_available = False
+                        break
+                    else:
+                        logger.warning(f"[hunter] History insert failed: {e}")
 
         logger.info(
             f"[hunter] Done: {stats['scored']} scored, "
@@ -130,6 +205,24 @@ def run_hunter() -> dict[str, int]:
         raise
 
     return stats
+
+
+def _log_score_distribution(sorted_scores: list[float]) -> None:
+    """Log p10/p25/p50/p75/p90/p99 of raw scores for calibration drift visibility."""
+    n = len(sorted_scores)
+    if n == 0:
+        return
+
+    def _pct(p: float) -> float:
+        idx = min(n - 1, max(0, int(round((p / 100) * (n - 1)))))
+        return sorted_scores[idx]
+
+    logger.info(
+        f"[hunter] Score distribution (n={n}): "
+        f"p10={_pct(10):.1f} | p25={_pct(25):.1f} | p50={_pct(50):.1f} | "
+        f"p75={_pct(75):.1f} | p90={_pct(90):.1f} | p99={_pct(99):.1f} | "
+        f"min={sorted_scores[0]:.1f} | max={sorted_scores[-1]:.1f}"
+    )
 
 
 def _fallback_upsert(db: Any, batch: list[dict]) -> None:

@@ -62,6 +62,8 @@ Comandos:
   bot                    Inicia o bot conversacional do Telegram
   creci                  Coleta dados agregados do CRECI-SP
   pipeline               Roda pipeline completo
+  canon-bairros          Canonicaliza nomes de bairros existentes (one-shot LLM)
+  projects <sub>         CLI de company_projects (add|list|update|set-outcome)
 """.strip()
 
 
@@ -423,6 +425,17 @@ def main() -> None:
     elif command == "pipeline":
         names = args[1:] if len(args) > 1 else None
         asyncio.run(run_pipeline(names))
+    elif command == "canon-bairros":
+        from src.enricher_llm import run_canonicalize_neighborhoods
+        logger.info("=== Starting canonicalize-neighborhoods ===")
+        s = run_canonicalize_neighborhoods()
+        logger.info(
+            f"=== Canon done: {s['original_count']} → {s['canonical_count']} bairros, "
+            f"{s['merged_count']} merged, {s.get('deleted', 0)} deleted ==="
+        )
+    elif command == "projects":
+        from src.projects_cli import main as projects_main
+        raise SystemExit(projects_main(args[1:]))
     else:
         print(f"Comando desconhecido: {command}")
         print(USAGE)

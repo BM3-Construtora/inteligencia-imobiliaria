@@ -23,15 +23,28 @@ def run_market_heat() -> dict[str, int]:
         ).gt("total_listings", 0).execute()
 
         # Calculate all scores in memory
-        updates: dict[int, list[str]] = {}  # score → list of neighborhood names
+        scored: list[tuple[str, int]] = []
         for n in (result.data or []):
             score = _calc_heat(n)
+            scored.append((n["name"], score))
             stats["neighborhoods"] += 1
-            if score >= 70:
+
+        # Percentile-based thresholds within current run
+        scores_only = sorted(s for _, s in scored)
+        p33 = _percentile(scores_only, 33)
+        p66 = _percentile(scores_only, 66)
+        logger.info(
+            f"[heat] thresholds: cold<{p33}, warm<{p66}, hot>={p66} "
+            f"(p33={p33}, p66={p66})"
+        )
+
+        updates: dict[int, list[str]] = {}
+        for name, score in scored:
+            if score >= p66:
                 stats["hot"] += 1
-            elif score <= 30:
+            elif score < p33:
                 stats["cold"] += 1
-            updates.setdefault(score, []).append(n["name"])
+            updates.setdefault(score, []).append(name)
 
         # Batch update: 1 query per unique score
         for score, names in updates.items():
@@ -115,3 +128,15 @@ def _calc_heat(n: dict[str, Any]) -> int:
         score += 3
 
     return min(100, max(0, int(score)))
+
+
+def _percentile(sorted_vals: list[int], pct: float) -> int:
+    """Returns percentile value from a sorted list (linear interpolation)."""
+    if not sorted_vals:
+        return 0
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    k = (len(sorted_vals) - 1) * (pct / 100.0)
+    lo, hi = int(k), min(int(k) + 1, len(sorted_vals) - 1)
+    frac = k - lo
+    return int(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac)

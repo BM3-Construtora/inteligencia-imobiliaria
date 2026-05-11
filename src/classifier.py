@@ -11,8 +11,23 @@ from src.db import get_client
 logger = logging.getLogger(__name__)
 
 # Default MCMV max price (overridden by mcmv_rules table)
-DEFAULT_MCMV_MAX_PRICE = 264_000
-DEFAULT_MCMV_MAX_AREA = 70  # m²
+# Faixa 3 atual ~R$264k urbano; Faixa 4 chega a R$350k em algumas RMs.
+# Marília está em transição — usamos teto mais alto pra não perder oportunidades;
+# o agente de viability filtra depois.
+DEFAULT_MCMV_MAX_PRICE = 350_000
+DEFAULT_MCMV_MAX_AREA = 60  # m² (Faixa 1/2 casa típica: 50-55; teto seguro 60)
+MCMV_AREA_TOLERANCE = 10    # m² — anúncios mentem; +10 evita falsos negativos
+
+
+def _infer_mcmv_faixa(price: float) -> Optional[str]:
+    """Infer MCMV faixa from sale price. Returns 'faixa12', 'faixa3' or None."""
+    if price <= 0:
+        return None
+    if price <= 200_000:
+        return "faixa12"
+    if price <= 350_000:
+        return "faixa3"
+    return None
 
 
 def classify_listing(
@@ -39,10 +54,15 @@ def classify_listing(
 
     # --- Casas ---
     if ptype in ("house", "condo_house"):
-        built_area = float(listing.get("built_area") or 0)
-        is_mcmv = listing.get("is_mcmv", False)
+        raw_built = listing.get("built_area")
+        built_area = float(raw_built) if raw_built is not None else None
+        is_mcmv_flag = listing.get("is_mcmv", False)
 
-        if is_mcmv or (price <= mcmv_max_price and built_area > 0 and built_area <= DEFAULT_MCMV_MAX_AREA):
+        area_ok = (
+            built_area is None
+            or built_area <= DEFAULT_MCMV_MAX_AREA + MCMV_AREA_TOLERANCE
+        )
+        if is_mcmv_flag or (price <= mcmv_max_price and area_ok):
             return "casa_mcmv"
         if price <= 350_000:
             return "casa_baixo_padrao"
@@ -119,6 +139,7 @@ def run_classifier() -> dict[str, int]:
         # Classify and group by (tier, is_mcmv) for batch updates
         by_payload: dict[tuple[str, bool], list[int]] = {}
         mcmv_count = 0
+        faixa_dist = {"faixa12": 0, "faixa3": 0, "none": 0}
 
         for listing in listings:
             tier = classify_listing(listing, mcmv_max)
@@ -128,17 +149,29 @@ def run_classifier() -> dict[str, int]:
 
             ptype = listing.get("property_type")
             price = float(listing.get("sale_price") or 0)
-            built_area = float(listing.get("built_area") or 0)
+            raw_built = listing.get("built_area")
+            built_area = float(raw_built) if raw_built is not None else None
+            apt_area_ok = (
+                built_area is None
+                or built_area <= DEFAULT_MCMV_MAX_AREA + MCMV_AREA_TOLERANCE
+            )
 
             is_mcmv = tier == "casa_mcmv" or (
                 ptype == "apartment"
                 and tier == "apto_economico"
                 and 0 < price <= mcmv_max
-                and 0 < built_area <= DEFAULT_MCMV_MAX_AREA
+                and apt_area_ok
             )
 
             if is_mcmv:
                 mcmv_count += 1
+                faixa = _infer_mcmv_faixa(price)
+                if faixa == "faixa12":
+                    faixa_dist["faixa12"] += 1
+                elif faixa == "faixa3":
+                    faixa_dist["faixa3"] += 1
+                else:
+                    faixa_dist["none"] += 1
 
             by_payload.setdefault((tier, is_mcmv), []).append(listing["id"])
             stats["classified"] += 1
@@ -154,6 +187,12 @@ def run_classifier() -> dict[str, int]:
                     logger.exception(f"[classifier] Failed batch update for tier {tier}")
 
         logger.info(f"[classifier] is_mcmv set on {mcmv_count} listings")
+        logger.info(
+            f"[classifier] faixa distribution: "
+            f"faixa12={faixa_dist['faixa12']} "
+            f"faixa3={faixa_dist['faixa3']} "
+            f"none={faixa_dist['none']}"
+        )
 
         logger.info(
             f"[classifier] Done: {stats['classified']} classified, "

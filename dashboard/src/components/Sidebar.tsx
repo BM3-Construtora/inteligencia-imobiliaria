@@ -9,9 +9,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Building2,
+  GitCompare,
 } from 'lucide-react'
 
-export type Page = 'overview' | 'map' | 'decision' | 'viability' | 'market' | 'opportunities' | 'data-health'
+export type Page =
+  | 'overview'
+  | 'map'
+  | 'decision'
+  | 'viability'
+  | 'market'
+  | 'opportunities'
+  | 'data-health'
+  | 'match-review'
+  | 'projects'
 
 const NAV_ITEMS: { key: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'overview', label: 'Visao Geral', icon: LayoutDashboard },
@@ -20,6 +30,8 @@ const NAV_ITEMS: { key: Page; label: string; icon: typeof LayoutDashboard }[] = 
   { key: 'viability', label: 'Viabilidade', icon: Calculator },
   { key: 'market', label: 'Mercado', icon: BarChart3 },
   { key: 'opportunities', label: 'Oportunidades', icon: Table2 },
+  { key: 'match-review', label: 'Revisao de Matches', icon: GitCompare },
+  { key: 'projects', label: 'Projetos BM3', icon: Building2 },
   { key: 'data-health', label: 'Saude dos Dados', icon: Activity },
 ]
 

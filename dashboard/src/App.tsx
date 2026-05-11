@@ -11,6 +11,8 @@ import { PriceTrend } from './components/PriceTrend'
 import { DecisionPanel } from './components/DecisionPanel'
 import { ViabilityCalculator } from './components/ViabilityCalculator'
 import { DataHealth } from './components/DataHealth'
+import { MatchReview } from './components/MatchReview'
+import { CompanyProjects } from './components/CompanyProjects'
 import { Sidebar, type Page } from './components/Sidebar'
 import { FilterProvider, useFilters } from './contexts/FilterContext'
 import { useFilteredStats } from './hooks/useFilteredData'
@@ -35,6 +37,8 @@ const PAGE_TITLES: Record<Page, { title: string; subtitle: string }> = {
   viability: { title: 'Calculadora de Viabilidade', subtitle: 'Simule projetos e calcule retorno' },
   market: { title: 'Analise de Mercado', subtitle: 'Graficos, tendencias e benchmarks' },
   opportunities: { title: 'Oportunidades', subtitle: 'Melhores terrenos ranqueados por score' },
+  'match-review': { title: 'Revisao de Matches', subtitle: 'Confirme ou rejeite matches de dedup na zona cinza' },
+  projects: { title: 'Projetos BM3', subtitle: 'Projetos proprios de construcao' },
   'data-health': { title: 'Saude dos Dados', subtitle: 'Status do pipeline e qualidade do dataset' },
 }
 
@@ -175,6 +179,12 @@ function Dashboard() {
 
           {/* OPPORTUNITIES PAGE */}
           {activePage === 'opportunities' && <OpportunitiesTable />}
+
+          {/* MATCH REVIEW PAGE */}
+          {activePage === 'match-review' && <MatchReview />}
+
+          {/* COMPANY PROJECTS PAGE */}
+          {activePage === 'projects' && <CompanyProjects />}
 
           {/* DATA HEALTH PAGE */}
           {activePage === 'data-health' && <DataHealth />}

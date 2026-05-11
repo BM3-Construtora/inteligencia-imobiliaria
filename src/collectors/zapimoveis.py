@@ -141,7 +141,7 @@ class ZapImoveisCollector(BaseCollector):
             if not neighborhood:
                 neighborhood = address_data.get("addressLocality")
 
-        return {
+        out: dict[str, Any] = {
             "id": item_id,
             "url": url,
             "name": name,
@@ -158,6 +158,12 @@ class ZapImoveisCollector(BaseCollector):
             "state": "SP",
             "images": images,
         }
+
+        history = _extract_price_history(item)
+        if history:
+            out["_scraped_price_history"] = history
+
+        return out
 
     def _parse_url(self, url: str) -> dict[str, Any]:
         """Extract structured data from ZAP listing URL."""
@@ -220,6 +226,39 @@ def _extract_price_from_offers(item: dict[str, Any]) -> int | None:
             except (ValueError, TypeError):
                 pass
     return None
+
+
+def _extract_price_history(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract price history from JSON-LD if exposed (priceHistory or multiple offers)."""
+    history: list[dict[str, Any]] = []
+
+    ph = item.get("priceHistory") or item.get("pricing")
+    if isinstance(ph, list):
+        for entry in ph:
+            if not isinstance(entry, dict):
+                continue
+            price = entry.get("price") or entry.get("amount")
+            date = entry.get("date") or entry.get("validFrom") or entry.get("validThrough")
+            if price and date:
+                try:
+                    history.append({"date": str(date), "price": int(float(price))})
+                except (ValueError, TypeError):
+                    pass
+
+    offers = item.get("offers")
+    if isinstance(offers, list) and len(offers) > 1:
+        for o in offers:
+            if not isinstance(o, dict):
+                continue
+            price = o.get("price") or o.get("lowPrice")
+            date = o.get("validFrom") or o.get("priceValidUntil")
+            if price and date:
+                try:
+                    history.append({"date": str(date), "price": int(float(price))})
+                except (ValueError, TypeError):
+                    pass
+
+    return history
 
 
 def _map_schema_type(schema_type: str) -> str | None:

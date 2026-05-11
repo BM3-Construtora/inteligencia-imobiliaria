@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from src.db import get_client
 from src.llm import extract_listing_attributes, batch_normalize_neighborhoods
+from src.llm import _generate, _parse_json  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,163 @@ def _extract_attributes(db: Any, stats: dict[str, int]) -> None:
             logger.info(
                 f"[llm_enricher] Progress: {stats['processed']}/{len(to_enrich)}"
             )
+
+
+def run_canonicalize_neighborhoods() -> dict[str, int]:
+    """One-shot backfill: cluster existing neighborhood names into canonical form via LLM."""
+    db = get_client()
+    stats = {"original_count": 0, "canonical_count": 0, "merged_count": 0, "deleted": 0}
+
+    run_result = (
+        db.table("agent_runs")
+        .insert({"agent_name": "canon_bairros", "status": "running"})
+        .execute()
+    )
+    run_id = run_result.data[0]["id"] if run_result.data else None
+
+    try:
+        # 1) Pega lista distinta de bairros via listings (paginado p/ furar limite 1000)
+        names: set[str] = set()
+        page_size = 1000
+        offset = 0
+        while True:
+            res = (
+                db.table("listings")
+                .select("neighborhood")
+                .not_.is_("neighborhood", "null")
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            rows = res.data or []
+            if not rows:
+                break
+            for r in rows:
+                n = (r.get("neighborhood") or "").strip()
+                if n:
+                    names.add(n)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+
+        original = sorted(names)
+        stats["original_count"] = len(original)
+        logger.info(f"[canon] Fetched {len(original)} distinct neighborhood names")
+
+        if not original:
+            _finish_run(db, run_id, "completed", {"processed": 0, "enriched": 0, **stats})
+            return stats
+
+        # 2) Agrupa por token inicial (case-insensitive, sem pontuação)
+        groups: dict[str, list[str]] = {}
+        for name in original:
+            token = name.split()[0].strip(".,").lower() if name.split() else "_"
+            # Normaliza abreviações comuns p/ chave de agrupamento
+            token = {
+                "jd": "jardim", "jd.": "jardim",
+                "pq": "parque", "pq.": "parque",
+                "res": "residencial", "res.": "residencial",
+                "vl": "vila", "vl.": "vila",
+                "n.h.": "nh", "nh": "nh",
+            }.get(token, token)
+            groups.setdefault(token, []).append(name)
+
+        logger.info(f"[canon] Grouped into {len(groups)} clusters by initial token")
+
+        # 3) Para cada grupo, chama LLM (chunks de 60 p/ não estourar contexto)
+        full_map: dict[str, str] = {}
+        for token, group_names in groups.items():
+            for i in range(0, len(group_names), 60):
+                chunk = group_names[i:i + 60]
+                mapping = _canon_llm_call(chunk)
+                if mapping:
+                    full_map.update(mapping)
+
+        # 4) UPDATE listings em batch por canônico
+        # Agrupa: canônico → [originais]
+        canon_to_originals: dict[str, list[str]] = {}
+        for orig, canon in full_map.items():
+            if not canon or not isinstance(canon, str):
+                continue
+            canon_clean = canon.strip()
+            if not canon_clean:
+                continue
+            canon_to_originals.setdefault(canon_clean, []).append(orig)
+
+        merged = 0
+        canonical_names: set[str] = set(canon_to_originals.keys())
+        for canon, origs in canon_to_originals.items():
+            to_change = [o for o in origs if o != canon]
+            if not to_change:
+                continue
+            try:
+                db.table("listings").update(
+                    {"neighborhood": canon}
+                ).in_("neighborhood", to_change).execute()
+                merged += len(to_change)
+                logger.info(f"[canon] {len(to_change)} → '{canon}'")
+            except Exception:
+                logger.warning(f"[canon] update failed for canon='{canon}'", exc_info=True)
+
+        stats["canonical_count"] = len(canonical_names)
+        stats["merged_count"] = merged
+
+        # 5) DELETE neighborhoods órfãos com total_listings < 5 (apenas dups pequenos)
+        try:
+            res = (
+                db.table("neighborhoods")
+                .select("name, total_listings")
+                .execute()
+            )
+            orphans = [
+                r["name"] for r in (res.data or [])
+                if r.get("name") not in canonical_names
+                and (r.get("total_listings") or 0) < 5
+            ]
+            if orphans:
+                # Delete em batches de 100
+                for i in range(0, len(orphans), 100):
+                    batch = orphans[i:i + 100]
+                    db.table("neighborhoods").delete().in_("name", batch).execute()
+                stats["deleted"] = len(orphans)
+                logger.info(f"[canon] Deleted {len(orphans)} orphan neighborhoods (total_listings<5)")
+        except Exception:
+            logger.warning("[canon] orphan cleanup failed", exc_info=True)
+
+        logger.info(
+            f"[canon] {stats['original_count']} → {stats['canonical_count']} bairros, "
+            f"{stats['merged_count']} merged"
+        )
+        _finish_run(db, run_id, "completed", {"processed": stats["original_count"], "enriched": merged, **stats})
+
+    except Exception as e:
+        logger.exception("[canon] Failed")
+        _finish_run(db, run_id, "failed", {"processed": 0, "enriched": 0, **stats}, str(e))
+        raise
+
+    return stats
+
+
+def _canon_llm_call(names: list[str]) -> dict[str, str]:
+    """LLM cluster call for a group of names."""
+    if not names:
+        return {}
+    names_list = "\n".join(f"- {n}" for n in names)
+    prompt = (
+        f"Aqui estão {len(names)} nomes de bairros de Marília-SP. "
+        f"Agrupe os duplicados/variações e retorne um mapa nome_original → nome_canônico.\n\n"
+        f"Critério: mesma localização física. Corrija abreviações "
+        f"(Jd→Jardim, Pq→Parque, Res→Residencial, Vl→Vila, N.H.→Núcleo Habitacional), "
+        f"erros de digitação e casing. Use o nome oficial completo.\n\n"
+        f"Exemplo: 'Jardim S Antonieta' e 'Jd Santa Antonieta' → 'Jardim Santa Antonieta'.\n\n"
+        f"Se um nome não tem duplicata, mantenha-o (apenas corrija a forma).\n"
+        f"Retorne APENAS JSON: {{\"original\": \"canônico\", ...}}\n\n"
+        f"Nomes:\n{names_list}"
+    )
+    text = _generate(prompt, max_tokens=8000)
+    if not text:
+        return {}
+    result = _parse_json(text)
+    return result if isinstance(result, dict) else {}
 
 
 def _has_enriched_features(features: Any) -> bool:
