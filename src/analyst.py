@@ -305,6 +305,7 @@ def _update_all_neighborhoods(db: Any) -> int:
 
         row: dict[str, Any] = {
             "name": name,
+            "city": "Marília",
             "avg_price_m2_land": avg_land,
             "avg_price_m2_house": avg_house,
             "avg_price_m2_apt": avg_apt,
@@ -328,11 +329,11 @@ def _update_all_neighborhoods(db: Any) -> int:
 
         # Flush in batches of 50
         if len(batch) >= 50:
-            db.table("neighborhoods").upsert(batch, on_conflict="name").execute()
+            db.table("neighborhoods").upsert(batch, on_conflict="name,city").execute()
             batch = []
 
     if batch:
-        db.table("neighborhoods").upsert(batch, on_conflict="name").execute()
+        db.table("neighborhoods").upsert(batch, on_conflict="name,city").execute()
 
     logger.info(f"[analyst] Updated {count} neighborhoods in bulk")
     return count
@@ -489,6 +490,7 @@ def _update_neighborhood(db: Any, name: str) -> None:
 
     data: dict[str, Any] = {
         "name": name,
+        "city": "Marília",
         "avg_price_m2_land": _avg_price_m2("land"),
         "avg_price_m2_house": _avg_price_m2("house"),
         "avg_price_m2_apt": _avg_price_m2("apartment"),
@@ -509,7 +511,7 @@ def _update_neighborhood(db: Any, name: str) -> None:
         data["latitude"] = lat_avg
         data["longitude"] = lng_avg
 
-    db.table("neighborhoods").upsert(data, on_conflict="name").execute()
+    db.table("neighborhoods").upsert(data, on_conflict="name,city").execute()
 
 
 def _finish_run(
