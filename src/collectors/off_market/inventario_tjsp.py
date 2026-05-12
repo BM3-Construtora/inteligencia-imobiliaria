@@ -44,9 +44,18 @@ DATAJUD_API_KEY = os.getenv(
 #   1432 = Arrolamento Sumário
 CLASSE_CODES = [1372, 1473, 1432]
 
-# Código IBGE de Marília-SP = 3528502 (município).
-# DataJud também aceita filtro por orgaoJulgador.codigoMunicipioIBGE.
-MARILIA_IBGE = 3528502
+# Código IBGE de Marília-SP = 3529005 (3528502 é Mairiporã — bug fix 2026-05-11)
+MARILIA_IBGE = 3529005
+
+# LIMITAÇÃO 2026-05-11: Inventários no TJ-SP correm em segredo de justiça por
+# padrão (art. 189 CPC). DataJud público NÃO indexa esses processos.
+# Marília tem 10k+ processos públicos mas 0 das classes 1372/1473/1432 visíveis.
+# Alternativas exploráveis:
+#  - Diário de Justiça Eletrônico (DJE-SP): editais de citação de herdeiros
+#  - Cartórios de registro civil (notícia de óbito + posterior abertura)
+#  - Cartórios de notas (escritura pública de inventário extrajudicial)
+# Mantemos o collector aqui como scaffold para quando uma dessas fontes for
+# integrada — hoje retorna 0 silenciosamente.
 
 BATCH_SIZE = 50
 TIMEOUT = 30

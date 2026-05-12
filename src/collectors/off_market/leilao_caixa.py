@@ -2,9 +2,19 @@
 
 Fonte: https://venda-imoveis.caixa.gov.br/sistema/
 
-Site Caixa migrou para rendering JS — endpoint `carregaListaImoveis.asp`
-não retorna mais HTML usável via simples POST. Solução: Playwright headless
-preenche o form (Estado=SP, Cidade=Marília) e extrai os resultados após render.
+STATUS 2026-05-11: Site Caixa usa Radware Bot Manager + carregamento
+multi-step de resultados via XHR pós-aprovação de fingerprint. O fluxo
+abaixo (estado → cidade → next0 → next1) é estruturalmente correto mas
+o container #listaimoveis fica vazio em modo headless mesmo com
+evasão básica (UA + navigator.webdriver). Próximos passos para fechar:
+  - Usar playwright-stealth lib (rebrowser-patches)
+  - OU rodar headless=False com xvfb em servidor
+  - OU usar o endpoint público de PDF semanal (gov.br/caixa/leilões)
+  - OU substituir por scraping de portais de leiloeiros oficiais (megaleiloes, etc)
+
+Como uso interno BM3 prioriza Marília-SP (cidade pequena, poucos leilões
+Caixa típicos), recomendação: aguardar iteração e usar enquanto isso
+inventário TJ-SP + IPTU devedores que são mais confiáveis.
 
 Se Playwright não instalado ou fonte indisponível, retorna 0 created sem
 travar o pipeline. Instale com: `pip install playwright && playwright install chromium`.
@@ -90,13 +100,27 @@ def _fetch_marilia_listings() -> list[dict[str, Any]]:
     html = ""
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            # Anti-detecção: site Caixa usa Radware Bot Manager,
+            # bloqueia HeadlessChrome UA + navigator.webdriver true
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ],
+            )
             ctx = browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
                 ),
+                viewport={"width": 1366, "height": 768},
                 locale="pt-BR",
+            )
+            ctx.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', "
+                "{get: () => undefined});"
             )
             page = ctx.new_page()
             page.set_default_timeout(TIMEOUT_MS)
@@ -129,14 +153,18 @@ def _fetch_marilia_listings() -> list[dict[str, Any]]:
                         "}"
                     )
 
-            # Submete busca — botão Próximo
+            # Submete em 2 cliques: next0 (estado+cidade) → next1 (filtros opcionais)
+            page.click("#btn_next0")
+            page.wait_for_selector("#btn_next1", state="visible", timeout=TIMEOUT_MS)
+            page.wait_for_timeout(800)
             page.click("#btn_next1")
-            # Aguarda lista renderizar
-            page.wait_for_selector(
-                "a[href*='hdnImovel='], div#listaimoveispaginacao",
+
+            # Resultados ficam em #listaimoveis. Aguarda popular.
+            page.wait_for_function(
+                "() => { const e = document.querySelector('#listaimoveis');"
+                " return e && e.innerText.trim().length > 100; }",
                 timeout=TIMEOUT_MS,
             )
-            # Pequeno settle pra paginação
             page.wait_for_timeout(1500)
 
             html = page.content()
