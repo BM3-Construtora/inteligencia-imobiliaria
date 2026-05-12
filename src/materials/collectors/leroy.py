@@ -16,6 +16,8 @@ cai pra to_price.
 from __future__ import annotations
 
 import logging
+import random
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,9 +68,10 @@ class LeroyItem:
 def search_products(
     query: str,
     *,
-    page_size: int = 50,
-    max_results: int = 200,
+    page_size: int = 24,
+    max_results: int = 48,
     timeout: int = DEFAULT_TIMEOUT,
+    sleep_between_pages: tuple[float, float] = (1.0, 2.5),
 ) -> list[LeroyItem]:
     """Busca produtos. Pagina até max_results."""
     results: list[LeroyItem] = []
@@ -120,6 +123,7 @@ def search_products(
         if len(products) < page_size:
             break
         page += 1
+        time.sleep(random.uniform(*sleep_between_pages))
 
     return results
 

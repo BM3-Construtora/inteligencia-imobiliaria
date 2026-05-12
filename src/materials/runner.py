@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable
@@ -44,6 +46,11 @@ def _telhanorte_search(query: str) -> list[CommonListing]:
 SEARCHERS: dict[str, Callable[[str], list[CommonListing]]] = {
     "leroy_merlin": _leroy_search,
     "telhanorte": _telhanorte_search,
+}
+
+# Sleep entre queries (sec). Suppliers com antibot agressivo precisam pausar.
+QUERY_SLEEP: dict[str, tuple[float, float]] = {
+    "leroy_merlin": (3.0, 6.0),
 }
 
 
@@ -75,8 +82,11 @@ def run(supplier_filter: str | None = None, dry_run: bool = False) -> dict[str, 
 
         queries = _collect_queries(seeds)
         seen_supplier_skus: set[str] = set()
+        sleep_range = QUERY_SLEEP.get(supplier_slug)
 
-        for query in queries:
+        for q_idx, query in enumerate(queries):
+            if sleep_range and q_idx > 0:
+                time.sleep(random.uniform(*sleep_range))
             try:
                 listings = search(query)
             except Exception:
