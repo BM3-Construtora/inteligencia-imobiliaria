@@ -21,6 +21,7 @@ import logging
 import random
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -74,12 +75,15 @@ def run(supplier_filter: str | None = None, dry_run: bool = False) -> dict[str, 
             logger.warning(f"[materials] Supplier '{supplier_filter}' não encontrado ou inativo")
             return dict(stats)
 
+    run_start_iso = datetime.now(timezone.utc).isoformat()
+
     for supplier_slug, supplier_id in supplier_id_by_slug.items():
         search = SEARCHERS.get(supplier_slug)
         if search is None:
             logger.info(f"[materials] Sem coletor para '{supplier_slug}', pulando")
             continue
 
+        supplier_start_iso = datetime.now(timezone.utc).isoformat()
         queries = _collect_queries(seeds)
         seen_supplier_skus: set[str] = set()
         sleep_range = QUERY_SLEEP.get(supplier_slug)
@@ -112,14 +116,25 @@ def run(supplier_filter: str | None = None, dry_run: bool = False) -> dict[str, 
 
                 try:
                     listing_id = _upsert_listing(db, listing, supplier_id, sku_id)
-                    _insert_price_history(db, listing_id, listing)
+                    inserted = _insert_price_history_if_changed(db, listing_id, listing)
                     stats[f"{supplier_slug}_persisted"] += 1
+                    if inserted:
+                        stats[f"{supplier_slug}_price_inserts"] += 1
+                    else:
+                        stats[f"{supplier_slug}_price_unchanged"] += 1
                 except Exception:
                     logger.exception(
                         f"[materials] persist falhou supplier={supplier_slug} "
                         f"sku={listing.supplier_sku}"
                     )
                     stats[f"{supplier_slug}_persist_failures"] += 1
+
+        # Deactivation: listings desse supplier não vistos desde supplier_start.
+        # Só executa se a run desse supplier coletou pelo menos 1 listing,
+        # senão um erro de coleta marcaria tudo como inativo.
+        if not dry_run and stats[f"{supplier_slug}_persisted"] > 0:
+            deactivated = _deactivate_stale_listings(db, supplier_id, supplier_start_iso)
+            stats[f"{supplier_slug}_deactivated"] = deactivated
 
     logger.info(f"[materials] Stats: {dict(stats)}")
     return dict(stats)
@@ -238,6 +253,7 @@ def _collect_queries(seeds: list[dict]) -> list[str]:
 
 
 def _upsert_listing(db, listing: CommonListing, supplier_id: int, sku_id: int | None) -> int:
+    now_iso = datetime.now(timezone.utc).isoformat()
     payload = {
         "supplier_id": supplier_id,
         "supplier_sku": listing.supplier_sku,
@@ -246,6 +262,7 @@ def _upsert_listing(db, listing: CommonListing, supplier_id: int, sku_id: int | 
         "sku_id": sku_id,
         "url": listing.url,
         "is_active": listing.is_available,
+        "last_seen_at": now_iso,
         "raw_payload": listing.raw,
     }
     resp = (
@@ -258,17 +275,58 @@ def _upsert_listing(db, listing: CommonListing, supplier_id: int, sku_id: int | 
     return resp.data[0]["id"]
 
 
-def _insert_price_history(db, listing_id: int, listing: CommonListing) -> None:
-    if listing.price is None and listing.region_price is None:
-        return
+def _insert_price_history_if_changed(db, listing_id: int, listing: CommonListing) -> bool:
+    """Insere snapshot só se preço/availability mudou vs último. Retorna True se inseriu."""
+    effective_price = listing.region_price if listing.region_price is not None else listing.price
+    if effective_price is None:
+        return False
+
+    last = (
+        db.table("material_price_history")
+        .select("price,is_available,region_price")
+        .eq("listing_id", listing_id)
+        .order("collected_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if last.data:
+        prev = last.data[0]
+        same_price = _num_eq(prev.get("price"), effective_price)
+        same_region = _num_eq(prev.get("region_price"), listing.region_price)
+        same_avail = bool(prev.get("is_available")) == bool(listing.is_available)
+        if same_price and same_region and same_avail:
+            return False
+
     payload = {
         "listing_id": listing_id,
-        "price": listing.region_price if listing.region_price is not None else listing.price,
+        "price": effective_price,
         "list_price": listing.list_price,
         "region_price": listing.region_price,
         "is_available": listing.is_available,
     }
     db.table("material_price_history").insert(payload).execute()
+    return True
+
+
+def _num_eq(a, b, tol: float = 0.005) -> bool:
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return abs(float(a) - float(b)) <= tol
+
+
+def _deactivate_stale_listings(db, supplier_id: int, cutoff_iso: str) -> int:
+    """Marca is_active=false em listings ativos não vistos desde cutoff."""
+    resp = (
+        db.table("material_listing")
+        .update({"is_active": False})
+        .eq("supplier_id", supplier_id)
+        .eq("is_active", True)
+        .lt("last_seen_at", cutoff_iso)
+        .execute()
+    )
+    return len(resp.data or [])
 
 
 # ---------------------------------------------------------------------------

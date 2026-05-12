@@ -9,6 +9,8 @@ on:
 env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
   SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  MATERIALS_DISCOVERY_LIMIT: '150'
 
 jobs:
   collect-materials:
@@ -24,6 +26,9 @@ jobs:
       - name: Run materials pipeline
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 20
+          timeout_minutes: 15
           max_attempts: 2
           command: python -m src.materials.runner
+      - name: SKU discovery (LLM)
+        continue-on-error: true
+        run: python -m src.materials.discovery

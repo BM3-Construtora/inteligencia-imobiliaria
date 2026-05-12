@@ -94,6 +94,13 @@ RE_TABLE_ROW_MIN = re.compile(
     re.MULTILINE,
 )
 
+# Layout real PGV Marília (LC 672/2013) Tabela 5:
+#   "4831 R$ 365,00 4877 R$ 343,00 4923 R$ 189,00"
+# 3 colunas paralelas, sem setor/face separados — só código único.
+RE_FACE_VALOR = re.compile(
+    r"(?P<face>\d{3,5})\s+R\$\s*(?P<value>\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)",
+)
+
 
 def run_collector() -> dict[str, int]:
     """Baixa PDF da PGV, parseia tabela e upserta em iptu_planta_valores."""
@@ -185,15 +192,17 @@ def _parse(content: bytes, content_type: str) -> list[dict[str, Any]]:
 
     # 1) Tentar extract_tables (caso PDF tenha grid real)
     rows = _pdf_extract_tables(content)
-    if rows:
-        logger.info(f"[{SOURCE}] extract_tables retornou {len(rows)} linhas")
-        return rows
 
-    # 2) Fallback regex sobre texto bruto
+    # 2) Sempre tentar regex no texto também — PGV Marília não tem grid,
+    #    extract_tables retorna ruído. Escolhe o que tiver mais linhas.
     text = _pdf_to_text(content)
-    if not text:
-        return []
-    return _parse_text(text)
+    text_rows = _parse_text(text) if text else []
+
+    logger.info(
+        f"[{SOURCE}] extract_tables={len(rows)} text_regex={len(text_rows)}"
+    )
+
+    return text_rows if len(text_rows) > len(rows) else rows
 
 
 def _pdf_extract_tables(content: bytes) -> list[dict[str, Any]]:
@@ -272,6 +281,29 @@ def _parse_text(text: str) -> list[dict[str, Any]]:
     """Fallback regex sobre texto plano da PGV."""
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+
+    # 1) Layout PGV Marília LC 672/2013: "FACE R$ VALOR" em colunas paralelas.
+    for m in RE_FACE_VALOR.finditer(text):
+        face = m.group("face")
+        key = (face, "")
+        if key in seen:
+            continue
+        seen.add(key)
+        value = _parse_brl(m.group("value"))
+        if value is None or value <= 0:
+            continue
+        out.append({
+            "sector_code": face,  # Marília usa código único, sem setor/face split
+            "face_code": None,
+            "street_name": None,
+            "street_from": None,
+            "street_to": None,
+            "land_value_per_m2": value,
+            "raw": m.group(0).strip(),
+        })
+
+    if out:
+        return out
 
     for m in RE_TABLE_ROW.finditer(text):
         sector = m.group("sector").lstrip("0") or "0"
