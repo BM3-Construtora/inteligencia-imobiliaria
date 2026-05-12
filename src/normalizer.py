@@ -222,10 +222,13 @@ def normalize_uniao(raw: dict[str, Any]) -> dict[str, Any]:
     # Features
     features = raw.get("features") or []
 
+    code = raw.get("code")
+    url = f"https://www.imobiliariauniao.com.br/imovel/{code}" if code else None
+
     return {
         "source": "uniao",
         "source_id": raw["id"],
-        "url": None,  # DreamKeys doesn't expose public URLs
+        "url": url,
         "property_type": prop_type,
         "business_type": biz,
         "title": raw.get("title"),
