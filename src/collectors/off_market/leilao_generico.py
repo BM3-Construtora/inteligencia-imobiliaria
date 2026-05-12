@@ -109,17 +109,26 @@ def _fetch_items() -> list[dict[str, Any]]:
 
 
 def _parse_html(html: str) -> list[dict[str, Any]]:
-    """Best-effort: split em <article>/<li class*=lote>/<div class*=imovel>."""
+    """Best-effort: divide em blocos por anchors de itens ou containers."""
     if CITY_FILTER not in html.lower():
         return []
 
-    # Divide em "blocos" — captura tudo entre tags estruturais comuns
+    # Estratégia 1: blocos com containers semânticos
     chunks = re.split(
-        r"<(?:article|li class=\"[^\"]*(?:lote|imovel|leilao)[^\"]*\"|"
-        r"div class=\"[^\"]*(?:lote|imovel|leilao)[^\"]*\")[^>]*>",
+        r"<(?:article|li class=\"[^\"]*(?:lote|imovel|leilao|card|item|property)[^\"]*\"|"
+        r"div class=\"[^\"]*(?:lote|imovel|leilao|card|item|property)[^\"]*\")[^>]*>",
         html,
         flags=re.IGNORECASE,
     )
+    # Estratégia 2 (fallback): se quase nenhum bloco match, divide por anchors
+    # que apontam para /imovel/ /lote/ /leilao/ etc — typical de portais sem semantic markup
+    if len(chunks) < 5:
+        chunks = re.split(
+            r"(?=<a\s[^>]*href=\"(?:https?://[^\"]+)?/"
+            r"(?:imovel|lote|leilao|imoveis|leiloes)/[^\"]+\")",
+            html,
+            flags=re.IGNORECASE,
+        )
 
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
