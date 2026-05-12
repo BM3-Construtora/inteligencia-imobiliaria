@@ -148,6 +148,20 @@ def _parse_html(html: str) -> list[dict[str, Any]]:
             "/cdn-cgi/", "mailto:", "javascript:", "tel:",
         )):
             continue
+        # Ignora URLs de navegação do próprio site (não são itens)
+        nav_paths = (
+            "/login", "/cadastro", "/cadastrar", "/conta", "/perfil",
+            "/sobre", "/contato", "/contact", "/about",
+            "/termos", "/politica", "/privacidade",
+            "/busca", "/buscar", "/search", "/pesquisa", "/filtros",
+            "/blog/", "/noticias", "/ajuda", "/faq",
+        )
+        url_lower = url.lower()
+        if any(seg in url_lower for seg in nav_paths):
+            continue
+        # Exige slug de item (não só /imovel/sp/marilia/ — precisa ter slug específico)
+        if not re.search(r"/(?:imovel|lote|leilao|imoveis|leiloes)/[^/]+/[^/]+", url_lower):
+            continue
         if url.startswith("/"):
             base = re.match(r"https?://[^/]+", FEED_URL)
             if base:
@@ -168,12 +182,17 @@ def _parse_html(html: str) -> list[dict[str, Any]]:
         if len(text) < 20:
             continue
 
-        title = None
-        m_title = re.search(r"<(?:h[1-4]|strong|b)[^>]*>([^<]+)", chunk, re.IGNORECASE)
-        if m_title:
-            title = m_title.group(1).strip()[:200]
+        # Título — preferir slug do URL (mais limpo que badges %, etc do HTML)
+        title = _title_from_url_slug(url) or None
         if not title:
-            title = text[:80]
+            m_title = re.search(r"<(?:h[1-4]|strong|b)[^>]*>([^<]+)", chunk, re.IGNORECASE)
+            if m_title:
+                title = m_title.group(1).strip()[:200]
+        if not title or len(title) < 5 or re.match(r"^\d+%?$", title.strip()):
+            title = text[:120]
+
+        # Bairro extraído do slug do URL (heurística)
+        neighborhood = _neighborhood_from_slug(url)
 
         value = None
         m_val = re.search(r"R\$\s*([\d\.]+,\d{2})", text)
@@ -198,9 +217,45 @@ def _parse_html(html: str) -> list[dict[str, Any]]:
             "raw_text": text[:600],
             "estimated_value": value,
             "area_m2": area,
+            "neighborhood": neighborhood,
         })
 
     return items
+
+
+def _title_from_url_slug(url: str) -> str | None:
+    """Extrai título humano do slug do URL.
+    Ex: '/imovel/sp/marilia/residencial-jardim-california-2-quartos-...'
+        → 'Residencial Jardim California 2 Quartos'
+    """
+    m = re.search(r"/(?:imovel|lote|leilao|imoveis|leiloes)/[^/]*/[^/]*/([^/?#]+)", url, re.I)
+    if not m:
+        return None
+    slug = m.group(1)
+    # Remove ids numéricos longos e códigos no fim
+    slug = re.sub(r"-\d{4,}.*$", "", slug)
+    slug = re.sub(r"-(imovel|venda|direta|caixa|cef|economica|federal).*$", "", slug, flags=re.I)
+    words = slug.replace("-", " ").split()
+    # Limita a 8 palavras pra título compacto
+    return " ".join(w.capitalize() for w in words[:8]) if words else None
+
+
+def _neighborhood_from_slug(url: str) -> str | None:
+    """Detecta bairro no slug procurando keywords (jardim/residencial/vila/parque...).
+    Ex slug 'residencial-jardim-california-2-quartos...' → 'Jardim California'
+    """
+    m = re.search(r"/(?:imovel|lote|leilao|imoveis|leiloes)/[^/]*/[^/]*/([^/?#]+)", url, re.I)
+    if not m:
+        return None
+    slug = m.group(1).lower()
+    bairro_re = re.compile(
+        r"(?:^|-)((?:jardim|residencial|vila|parque|nucleo|n\.?h\.?|conjunto|"
+        r"loteamento|setor|bairro)-[a-z]+(?:-[a-z]+){0,2})"
+    )
+    mm = bairro_re.search(slug)
+    if not mm:
+        return None
+    return " ".join(w.capitalize() for w in mm.group(1).split("-"))
 
 
 def _parse_rss(xml: str) -> list[dict[str, Any]]:
@@ -246,6 +301,7 @@ def _to_signal_row(item: dict[str, Any]) -> dict[str, Any]:
         "signal_type": SIGNAL_TYPE,
         "title": item.get("title"),
         "description": item.get("raw_text"),
+        "neighborhood": item.get("neighborhood"),
         "city": CITY,
         "state": STATE,
         "estimated_value": item.get("estimated_value"),
