@@ -123,9 +123,26 @@ def run_deduplicator() -> dict[str, int]:
         for fp, fp_group in by_fingerprint.items():
             if len(fp_group) < 2:
                 continue
+            # Guard: if fp has empty number (typical for land in loteamentos),
+            # do not collapse 4+ same-source listings — likely distinct lots
+            # with identical area/price/street rather than a single relisting.
+            fp_parts = fp.split("|")
+            number_empty = len(fp_parts) >= 3 and not fp_parts[2]
+            same_source_counts: dict[str, int] = {}
+            if number_empty:
+                for x in fp_group:
+                    same_source_counts[x["source"]] = same_source_counts.get(x["source"], 0) + 1
+
             for i, a in enumerate(fp_group):
                 for b in fp_group[i + 1:]:
                     if a["property_type"] != b["property_type"]:
+                        continue
+                    if (
+                        number_empty
+                        and a["source"] == b["source"]
+                        and same_source_counts.get(a["source"], 0) > 3
+                    ):
+                        stats["fingerprint_guard_skipped"] = stats.get("fingerprint_guard_skipped", 0) + 1
                         continue
                     a_id, b_id = (a["id"], b["id"]) if a["id"] < b["id"] else (b["id"], a["id"])
                     pk = (a_id, b_id)

@@ -27,8 +27,10 @@ from typing import Callable
 
 from src.db import get_client
 from src.materials.collectors import leroy, telhanorte
+from src.materials.collectors.base_vtex import simulate_delivery as vtex_simulate
 from src.materials.matcher import SkuCandidate, match
 from src.materials.models import CommonListing, from_leroy, from_vtex
+from src.materials.normalize import compute as normalize_price
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,16 @@ QUERY_SLEEP: dict[str, tuple[float, float]] = {
     "leroy_merlin": (3.0, 6.0),
 }
 
+# Lojas VTEX cujo frete CEP 17500 dá pra simular via /orderForms/simulation.
+# Mapeia supplier_slug → (base_url, sales_channel).
+VTEX_SHIPPING: dict[str, tuple[str, int]] = {
+    "telhanorte": ("https://www.telhanorte.com.br", 1),
+}
+MARILIA_CEP = "17500000"
+
+# Populado em run() — mapeia sku_id → {category, unit, weight_kg}
+_sku_meta_by_id: dict[int, dict] = {}
+
 
 def run(supplier_filter: str | None = None, dry_run: bool = False) -> dict[str, int]:
     """Roda pipeline. Retorna stats agregadas."""
@@ -66,6 +78,8 @@ def run(supplier_filter: str | None = None, dry_run: bool = False) -> dict[str, 
     sku_id_by_seed = _upsert_seed_skus(db, seeds, dry_run=dry_run)
     candidates = _load_sku_candidates(db, sku_id_by_seed, seeds, dry_run=dry_run)
     supplier_id_by_slug = _load_active_suppliers(db)
+    global _sku_meta_by_id
+    _sku_meta_by_id = _load_sku_meta(db, dry_run=dry_run, seeds=seeds)
 
     if supplier_filter:
         supplier_id_by_slug = {
@@ -116,7 +130,18 @@ def run(supplier_filter: str | None = None, dry_run: bool = False) -> dict[str, 
 
                 try:
                     listing_id = _upsert_listing(db, listing, supplier_id, sku_id)
-                    inserted = _insert_price_history_if_changed(db, listing_id, listing)
+                    # Frete só pra SKU matched (seed) e em VTEX. Evita simular
+                    # 400+ vezes em produtos irrelevantes (custo + rate).
+                    shipping = None
+                    if sku_id is not None and supplier_slug in VTEX_SHIPPING and listing.supplier_sku:
+                        shipping = _try_vtex_shipping(supplier_slug, listing.supplier_sku)
+                        if shipping is not None:
+                            stats[f"{supplier_slug}_shipping_priced"] += 1
+                    sku_meta = _sku_meta_by_id.get(sku_id) if sku_id is not None else None
+                    inserted = _insert_price_history_if_changed(
+                        db, listing_id, listing,
+                        shipping_cost=shipping, sku_meta=sku_meta,
+                    )
                     stats[f"{supplier_slug}_persisted"] += 1
                     if inserted:
                         stats[f"{supplier_slug}_price_inserts"] += 1
@@ -229,6 +254,28 @@ def _load_sku_candidates(
     ]
 
 
+def _load_sku_meta(db, *, dry_run: bool, seeds: list[dict]) -> dict[int, dict]:
+    """sku_id → {category, unit, weight_kg} pra normalização durante persist."""
+    if dry_run:
+        return {
+            -(idx + 1): {
+                "category": s.get("category"),
+                "unit": s.get("unit"),
+                "weight_kg": s.get("weight_kg"),
+            }
+            for idx, s in enumerate(seeds)
+        }
+    resp = db.table("material_sku").select("id,category,unit,weight_kg").execute()
+    return {
+        row["id"]: {
+            "category": row.get("category"),
+            "unit": row.get("unit"),
+            "weight_kg": row.get("weight_kg"),
+        }
+        for row in (resp.data or [])
+    }
+
+
 def _load_active_suppliers(db) -> dict[str, int]:
     resp = (
         db.table("material_supplier")
@@ -275,15 +322,22 @@ def _upsert_listing(db, listing: CommonListing, supplier_id: int, sku_id: int | 
     return resp.data[0]["id"]
 
 
-def _insert_price_history_if_changed(db, listing_id: int, listing: CommonListing) -> bool:
-    """Insere snapshot só se preço/availability mudou vs último. Retorna True se inseriu."""
+def _insert_price_history_if_changed(
+    db,
+    listing_id: int,
+    listing: CommonListing,
+    *,
+    shipping_cost: float | None = None,
+    sku_meta: dict | None = None,
+) -> bool:
+    """Insere snapshot só se preço/availability/frete mudou. Retorna True se inseriu."""
     effective_price = listing.region_price if listing.region_price is not None else listing.price
     if effective_price is None:
         return False
 
     last = (
         db.table("material_price_history")
-        .select("price,is_available,region_price")
+        .select("price,is_available,region_price,shipping_cost")
         .eq("listing_id", listing_id)
         .order("collected_at", desc=True)
         .limit(1)
@@ -294,8 +348,18 @@ def _insert_price_history_if_changed(db, listing_id: int, listing: CommonListing
         same_price = _num_eq(prev.get("price"), effective_price)
         same_region = _num_eq(prev.get("region_price"), listing.region_price)
         same_avail = bool(prev.get("is_available")) == bool(listing.is_available)
-        if same_price and same_region and same_avail:
+        same_shipping = _num_eq(prev.get("shipping_cost"), shipping_cost, tol=0.5)
+        if same_price and same_region and same_avail and same_shipping:
             return False
+
+    sku_meta = sku_meta or {}
+    norm = normalize_price(
+        price=effective_price,
+        category=sku_meta.get("category"),
+        unit=sku_meta.get("unit"),
+        weight_kg=sku_meta.get("weight_kg"),
+        supplier_name=listing.supplier_name,
+    )
 
     payload = {
         "listing_id": listing_id,
@@ -303,9 +367,36 @@ def _insert_price_history_if_changed(db, listing_id: int, listing: CommonListing
         "list_price": listing.list_price,
         "region_price": listing.region_price,
         "is_available": listing.is_available,
+        "shipping_cost": shipping_cost,
+        "can_deliver_marilia": shipping_cost is not None if shipping_cost is not None else None,
+        "price_per_kg": norm.price_per_kg,
+        "price_per_m2": norm.price_per_m2,
+        "price_per_unit": norm.price_per_unit,
+        "is_outlier": norm.is_outlier,
+        "outlier_reason": norm.outlier_reason,
+        "source": "scrape",
     }
     db.table("material_price_history").insert(payload).execute()
     return True
+
+
+def _try_vtex_shipping(supplier_slug: str, supplier_sku: str) -> float | None:
+    """Chama simulate_delivery e retorna menor SLA. None se não entrega."""
+    cfg = VTEX_SHIPPING.get(supplier_slug)
+    if cfg is None:
+        return None
+    base_url, sc = cfg
+    try:
+        result = vtex_simulate(
+            base_url, supplier_sku, sales_channel=sc, postal_code=MARILIA_CEP
+        )
+    except Exception:
+        logger.exception(f"[materials] shipping sim falhou {supplier_slug}/{supplier_sku}")
+        return None
+    slas = result.get("slas") or []
+    if not slas:
+        return None
+    return min((s.get("price") or 0) for s in slas)
 
 
 def _num_eq(a, b, tol: float = 0.005) -> bool:
