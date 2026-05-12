@@ -28,3 +28,6 @@ MAX_PAGES_PER_SPIDER = int(os.getenv("MAX_PAGES_PER_SPIDER", "20"))
 
 # Multi-city — vazio = usa todas as cidades ativas em `cities` table
 CITY_FOCUS = os.getenv("CITY_FOCUS", "").strip()
+
+# Computer Vision
+GOOGLE_MAPS_KEY = os.getenv("GOOGLE_MAPS_KEY", "")

@@ -20,15 +20,18 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # Calibration assumptions (interior SP, projeto popular/MCMV)
 # Source: cross-check vs BM3 historical data when company_projects is populated
+# Override via env vars: VIABILITY_COMMISSION_PCT etc.
 # ============================================================
-COMMISSION_PCT = 4.0              # Corretagem real BR (4% do VGV)
-TYPICAL_SALES_MONTHS = 18         # Prazo médio de venda
-WORKING_CAPITAL_ANNUAL_PCT = 12.0 # Custo capital de giro (12% a.a.)
-REWORK_BUFFER_PCT = 5.0           # Buffer de retrabalho em obra residencial
-TETO_VENDA_DISCOUNT = 0.95        # Mercado raramente paga teto cheio
+import os
+
+COMMISSION_PCT = float(os.getenv("VIABILITY_COMMISSION_PCT", "4.0"))
+TYPICAL_SALES_MONTHS = int(os.getenv("VIABILITY_SALES_MONTHS", "12"))
+WORKING_CAPITAL_ANNUAL_PCT = float(os.getenv("VIABILITY_CAPITAL_PCT", "8.0"))
+REWORK_BUFFER_PCT = float(os.getenv("VIABILITY_REWORK_PCT", "3.0"))
+TETO_VENDA_DISCOUNT = float(os.getenv("VIABILITY_TETO_DISCOUNT", "0.97"))
 
 # BDI (Benefícios e Despesas Indiretas) — padrão MCMV construtoras pequenas/médias
-BDI_PCT = 0.22
+BDI_PCT = float(os.getenv("VIABILITY_BDI_PCT", "0.22"))
 
 # ============================================================
 # MCMV 2026 — Atualizado conforme Portaria MCID mar/2026

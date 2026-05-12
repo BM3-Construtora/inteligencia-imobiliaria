@@ -34,8 +34,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/top — Top 10 oportunidades de terrenos\n"
         "/bairro <nome> — Analise completa de um bairro\n"
         "/viabilidade <preco> <area> — Simular projeto MCMV\n"
+        "/ficha <endereco|CEP|coord|URL> — Ficha completa do terreno\n"
         "/mercado — Resumo geral do mercado\n"
-        "/relatorio — Relatorio semanal completo\n\n"
+        "/relatorio — Relatorio semanal completo\n"
+        "/deal_add <listing_id> <stage> — Registrar visita/oferta\n"
+        "/deal_update <deal_id> <stage> [preco]\n"
+        "/deal_outcome <deal_id> <margem%> <payback_meses>\n"
+        "/calibration — Drift report (Hunter/AVM/Viability vs realidade)\n\n"
         "Ou simplesmente *me faca uma pergunta* sobre o mercado imobiliario de Marilia!"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -165,6 +170,20 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("viabilidade", cmd_viabilidade))
     app.add_handler(CommandHandler("mercado", cmd_mercado))
     app.add_handler(CommandHandler("relatorio", cmd_relatorio))
+
+    # Track B — Ficha de Terreno
+    from src.telegram.handlers_ficha import cmd_ficha, handle_location
+    app.add_handler(CommandHandler("ficha", cmd_ficha))
+    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
+
+    # Track D — bm3_deals + calibration
+    from src.telegram.handlers_deals import (
+        cmd_deal_add, cmd_deal_update, cmd_deal_outcome, cmd_calibration,
+    )
+    app.add_handler(CommandHandler("deal_add", cmd_deal_add))
+    app.add_handler(CommandHandler("deal_update", cmd_deal_update))
+    app.add_handler(CommandHandler("deal_outcome", cmd_deal_outcome))
+    app.add_handler(CommandHandler("calibration", cmd_calibration))
 
     # Free-text messages → AI
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

@@ -29,20 +29,25 @@ def run_market_heat() -> dict[str, int]:
             scored.append((n["name"], score))
             stats["neighborhoods"] += 1
 
-        # Percentile-based thresholds within current run
+        # Percentile-based thresholds within current run, com floor
+        # absoluto pra evitar degeneração (p33==p66 quando scores enviesados).
         scores_only = sorted(s for _, s in scored)
         p33 = _percentile(scores_only, 33)
         p66 = _percentile(scores_only, 66)
+        cold_th = max(p33, 25)
+        hot_th = max(p66, 50)
+        if cold_th >= hot_th:
+            cold_th, hot_th = 25, 50
         logger.info(
-            f"[heat] thresholds: cold<{p33}, warm<{p66}, hot>={p66} "
-            f"(p33={p33}, p66={p66})"
+            f"[heat] thresholds: cold<{cold_th}, hot>={hot_th} "
+            f"(p33={p33}, p66={p66}, n={len(scores_only)})"
         )
 
         updates: dict[int, list[str]] = {}
         for name, score in scored:
-            if score >= p66:
+            if score >= hot_th:
                 stats["hot"] += 1
-            elif score < p33:
+            elif score < cold_th:
                 stats["cold"] += 1
             updates.setdefault(score, []).append(name)
 

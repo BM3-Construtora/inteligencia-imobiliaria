@@ -199,6 +199,12 @@ def simulate_viability_text(price: float, area: float) -> str:
     return "\n".join(lines)
 
 
+def get_ficha_query(text: str) -> str:
+    """Generate full land ficha (Track B) — wraps generate_ficha for Telegram."""
+    from src.telegram.ficha import generate_ficha
+    return generate_ficha(text)
+
+
 def get_market_context_for_ai() -> str:
     """Build a compact context string for LLM conversations."""
     db = get_client()

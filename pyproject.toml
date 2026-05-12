@@ -23,6 +23,10 @@ dev = [
     "pytest-mock>=3.14",
     "ruff>=0.8",
 ]
+avm = [
+    "lightgbm>=4.3",
+    "shap>=0.45",
+]
 
 [project.scripts]
 mariliabot = "src.main:main"

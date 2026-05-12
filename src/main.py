@@ -64,6 +64,14 @@ Comandos:
   pipeline               Roda pipeline completo
   canon-bairros          Canonicaliza nomes de bairros existentes (one-shot LLM)
   projects <sub>         CLI de company_projects (add|list|update|set-outcome)
+  off-market [src ...]   Coleta sinais off-market (leilao_caixa|iptu|alvara|inventario)
+  distress               Scora sinais off-market + envia top 5 Telegram
+  regulatory             Avalia signals regulatorios (zoneamento/APP/vendedor)
+  vision [N]             Computer Vision satelite (default 50 listings)
+  zoning-parse           Parse plano diretor Marilia -> zoning_zones
+  deals <sub>            CLI de bm3_deals (add|update|outcome|list|import-stalled)
+  calibration            Roda feedback loop (Hunter/AVM/Viability drift)
+  drift-report           Envia weekly drift report via Telegram
 """.strip()
 
 
@@ -436,6 +444,65 @@ def main() -> None:
     elif command == "projects":
         from src.projects_cli import main as projects_main
         raise SystemExit(projects_main(args[1:]))
+    elif command == "off-market":
+        names = args[1:] if len(args) > 1 else ["leilao_caixa", "iptu", "alvara", "inventario"]
+        mapping = {
+            "leilao_caixa": "src.collectors.off_market.leilao_caixa",
+            "iptu": "src.collectors.off_market.iptu_devedor",
+            "alvara": "src.collectors.off_market.alvara_prefeitura",
+            "inventario": "src.collectors.off_market.inventario_tjsp",
+        }
+        for n in names:
+            mod = mapping.get(n)
+            if not mod:
+                logger.warning(f"Unknown off-market source: {n}")
+                continue
+            try:
+                m = __import__(mod, fromlist=["run_collector"])
+                logger.info(f"=== Starting off-market collector: {n} ===")
+                s = m.run_collector()
+                logger.info(f"=== {n} done: {s} ===")
+            except Exception:
+                logger.exception(f"=== {n} FAILED ===")
+    elif command == "distress":
+        from src.distress import run_distress_scorer, send_daily_top_telegram
+        logger.info("=== Starting distress scorer ===")
+        s = run_distress_scorer()
+        logger.info(f"=== Distress done: {s} ===")
+        try:
+            send_daily_top_telegram(5)
+        except Exception:
+            logger.exception("[distress] Telegram send failed")
+    elif command == "regulatory":
+        from src.regulatory import run_regulatory_scorer
+        logger.info("=== Starting regulatory scorer ===")
+        s = run_regulatory_scorer()
+        logger.info(f"=== Regulatory done: {s} ===")
+    elif command == "vision":
+        from src.vision import run_vision_extractor
+        limit = int(args[1]) if len(args) > 1 else 50
+        logger.info(f"=== Starting vision extractor (limit={limit}) ===")
+        s = run_vision_extractor(limit=limit)
+        logger.info(f"=== Vision done: {s} ===")
+    elif command == "zoning-parse":
+        from src.collectors.zoning_marilia import parse_plano_diretor
+        url = args[1] if len(args) > 1 else None
+        logger.info("=== Starting zoning parser ===")
+        n = parse_plano_diretor(url)
+        logger.info(f"=== Zoning done: {n} zones ===")
+    elif command == "deals":
+        from src.deals_cli import main as deals_main
+        raise SystemExit(deals_main(args[1:]))
+    elif command == "calibration":
+        from src.feedback_loop import run_calibration
+        logger.info("=== Starting calibration ===")
+        s = run_calibration()
+        logger.info(f"=== Calibration done: {s} ===")
+    elif command == "drift-report":
+        from src.reporter_drift import run_weekly_drift_report
+        logger.info("=== Starting drift report ===")
+        s = run_weekly_drift_report()
+        logger.info(f"=== Drift report done: {s} ===")
     else:
         print(f"Comando desconhecido: {command}")
         print(USAGE)

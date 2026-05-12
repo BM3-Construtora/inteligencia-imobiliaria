@@ -192,3 +192,47 @@ def assess_risk(listing_data: dict[str, Any]) -> Optional[dict[str, Any]]:
         "risco_mercado": result.get("mercado", result.get("risco_mercado", 0)),
         "resumo": result.get("resumo", ""),
     }
+
+
+def generate_vision(
+    prompt: str, image_bytes: bytes, max_tokens: int = 1000
+) -> Optional[str]:
+    """Call Gemini Vision with prompt + image bytes. Returns raw text response.
+
+    Uses the same client/protections as `_generate`. Returns None if GEMINI_API_KEY
+    is missing or the call fails.
+    """
+    if not GEMINI_API_KEY:
+        return None
+    if not image_bytes:
+        return None
+    try:
+        from google.genai import types
+
+        client = _get_client()
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+
+        cfg_kwargs: dict[str, Any] = {
+            "max_output_tokens": max_tokens,
+            "temperature": 0.2,
+        }
+        try:
+            cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        except Exception:
+            pass
+
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[image_part, prompt],
+            config=types.GenerateContentConfig(**cfg_kwargs),
+        )
+        if response.text:
+            return response.text.strip()
+        if response.candidates:
+            parts = response.candidates[0].content.parts
+            text = "".join(p.text for p in parts if hasattr(p, "text") and p.text)
+            return text.strip() if text else None
+        return None
+    except Exception:
+        logger.warning("[llm] Gemini vision call failed", exc_info=True)
+        return None
