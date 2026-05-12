@@ -56,7 +56,12 @@ TIMEOUT = 60
 SLEEP_BETWEEN_YEARS = 2.0
 
 RE_HABITE = re.compile(
-    r"(habite[-\s]?se|certificado de conclus[ãa]o(?: de obra| parcial| total)?|vistoria final)"
+    # "habite-se" sempre é de obra; "certificado de conclusão" só se NÃO for de curso/disciplina
+    r"(?:"
+    r"habite[-\s]?se"
+    r"|certificado de conclus[ãa]o(?!\s+de\s+curso)(?!\s+de\s+(?:p[oó]s|gradua|especializa|aperfei))"
+    r"|vistoria final de obra"
+    r")"
     r"[^\n]{0,400}",
     re.IGNORECASE,
 )
@@ -85,8 +90,9 @@ RE_NEIGHBORHOOD = re.compile(
     r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s]{2,40})",
 )
 RE_ADDRESS = re.compile(
-    r"(?:rua|avenida|av\.?|travessa|alameda|al\.?|estrada|praça)\s+"
-    r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\w\s\.,Áéíóúâêôãõç-]{3,80}(?:\d{1,5})?",
+    # Exige número após o logradouro (ex: "Rua XV de Novembro, 123") pra evitar falsos positivos
+    r"(?:rua|avenida|av\.|travessa|alameda|estrada|praça)\s+"
+    r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\w\s\.,Áéíóúâêôãõç-]{3,60},?\s*n?[º°]?\s*\d{1,5}",
     re.IGNORECASE,
 )
 
@@ -272,6 +278,16 @@ def _extract_habite_se(
         address = (RE_ADDRESS.search(snippet) or type("", (), {"group": lambda self, n: None})()).group(0)
         if address:
             address = address.strip()
+
+        # Descarta se não houver sinal de obra (área, endereço ou processo longo)
+        has_obra_signal = any([
+            area_built,
+            area_terrain,
+            address,
+            proc and len(_normalize_proc(proc)) >= 6,
+        ])
+        if not has_obra_signal:
+            continue
 
         # source_id: processo se disponível, senão hash do snippet (prefixado por edição)
         if proc:
