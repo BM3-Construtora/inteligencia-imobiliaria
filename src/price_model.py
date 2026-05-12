@@ -160,17 +160,18 @@ def _fetch_listings(db: Any) -> list[dict]:
 
 
 def _fetch_market_heat(db: Any) -> dict[str, float]:
-    """Pull sales_heat.score per neighborhood if available. Optional."""
+    """Pull neighborhoods.market_heat_score per neighborhood. Optional."""
     try:
         result = (
-            db.table("sales_heat")
-            .select("neighborhood, score")
+            db.table("neighborhoods")
+            .select("name, market_heat_score")
+            .not_.is_("market_heat_score", "null")
             .execute()
         )
         return {
-            r["neighborhood"]: float(r["score"])
+            r["name"]: float(r["market_heat_score"])
             for r in (result.data or [])
-            if r.get("neighborhood") and r.get("score") is not None
+            if r.get("name") and r.get("market_heat_score") is not None
         }
     except Exception:
         return {}
