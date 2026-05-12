@@ -217,9 +217,9 @@ def _fetch_price_drops(db: Any, candidates: list[dict]) -> dict[int, int]:
         try:
             r = (
                 db.table("price_history")
-                .select("listing_id, price, changed_at")
+                .select("listing_id, new_price, detected_at")
                 .in_("listing_id", batch_ids)
-                .order("changed_at", desc=False)
+                .order("detected_at", desc=False)
                 .execute()
             )
         except APIError:
@@ -229,8 +229,8 @@ def _fetch_price_drops(db: Any, candidates: list[dict]) -> dict[int, int]:
         for row in r.data or []:
             lid = row.get("listing_id")
             try:
-                ts = datetime.fromisoformat(str(row["changed_at"]).replace("Z", "+00:00"))
-                price = float(row["price"])
+                ts = datetime.fromisoformat(str(row["detected_at"]).replace("Z", "+00:00"))
+                price = float(row["new_price"])
             except (ValueError, TypeError, KeyError):
                 continue
             per_listing.setdefault(lid, []).append((ts, price))

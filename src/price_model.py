@@ -143,6 +143,7 @@ def _fetch_listings(db: Any) -> list[dict]:
             )
             .eq("is_active", True)
             .eq("property_type", "land")
+            .is_("canonical_listing_id", "null")
             .not_.is_("sale_price", "null")
             .gt("sale_price", 5000)
             .not_.is_("total_area", "null")
