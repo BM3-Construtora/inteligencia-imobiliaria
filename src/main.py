@@ -66,6 +66,10 @@ Comandos:
   projects <sub>         CLI de company_projects (add|list|update|set-outcome)
   off-market [src ...]   Coleta sinais off-market (leilao_caixa|iptu|alvara|inventario)
   itbi                   Coleta transações de ITBI (preço real de venda) Marília-SP
+  habite-se              Coleta habite-se via API DOM-MAR (dados-abertos, sem LAI)
+  iptu-planta            Coleta planta genérica de valores IPTU (LC 672/2013)
+  labor                  Coleta índices SIDRA PNAD-C (rendimento/ocupados construção SP)
+  construction-timeline  Join alvará × habite-se → prazo/custo real por bairro
   distress               Scora sinais off-market + envia top 5 Telegram
   regulatory             Avalia signals regulatorios (zoneamento/APP/vendedor)
   vision [N]             Computer Vision satelite (default 50 listings)
@@ -479,6 +483,26 @@ def main() -> None:
         logger.info("=== Starting ITBI Marília collector ===")
         s = itbi_marilia.run_collector()
         logger.info(f"=== itbi done: {s} ===")
+    elif command == "habite-se":
+        from src.collectors.habite_se_marilia import run_collector as run_habite_se
+        logger.info("=== Starting Habite-se collector (DOM-MAR) ===")
+        s = run_habite_se()
+        logger.info(f"=== habite-se done: {s} ===")
+    elif command == "iptu-planta":
+        from src.collectors.iptu_planta_marilia import run_collector as run_iptu_planta
+        logger.info("=== Starting IPTU Planta Genérica collector ===")
+        s = run_iptu_planta()
+        logger.info(f"=== iptu-planta done: {s} ===")
+    elif command == "labor":
+        from src.collectors.labor_sidra import run_collector as run_labor
+        logger.info("=== Starting LABOR SIDRA collector ===")
+        s = run_labor()
+        logger.info(f"=== labor done: {s} ===")
+    elif command == "construction-timeline":
+        from src.construction_timeline import run_join_analyzer
+        logger.info("=== Starting construction timeline analyzer ===")
+        s = run_join_analyzer()
+        logger.info(f"=== construction-timeline done: {s} ===")
     elif command == "distress":
         from src.distress import run_distress_scorer, send_daily_top_telegram
         logger.info("=== Starting distress scorer ===")
