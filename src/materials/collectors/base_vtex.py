@@ -72,7 +72,8 @@ def search_products(
                 logger.warning(f"[vtex:{base}] HTTP error em '{query}' off={offset}: {e}")
                 break
 
-            if resp.status_code != 200:
+            # VTEX retorna 206 (Partial Content) em buscas paginadas — resposta válida
+            if resp.status_code not in (200, 206):
                 logger.warning(
                     f"[vtex:{base}] HTTP {resp.status_code} em '{query}' off={offset}"
                 )

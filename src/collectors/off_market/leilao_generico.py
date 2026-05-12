@@ -127,11 +127,18 @@ def _parse_html(html: str) -> list[dict[str, Any]]:
         if CITY_FILTER not in chunk.lower():
             continue
 
-        # URL absoluta ou relativa do item
-        m_url = re.search(r"href=\"([^\"]+)\"", chunk)
+        # URL absoluta ou relativa do item — só aceita href HTTP/anchor
+        m_url = re.search(r"href=\"((?:https?:|/)[^\"]+)\"", chunk)
         if not m_url:
             continue
         url = m_url.group(1)
+        # Ignora tracking, scripts, recursos
+        if any(bad in url.lower() for bad in (
+            "google-analytics", "googletagmanager", "facebook.com/tr",
+            ".js", ".css", ".png", ".jpg", ".gif", ".svg",
+            "/cdn-cgi/", "mailto:", "javascript:", "tel:",
+        )):
+            continue
         if url.startswith("/"):
             base = re.match(r"https?://[^/]+", FEED_URL)
             if base:
@@ -142,8 +149,15 @@ def _parse_html(html: str) -> list[dict[str, Any]]:
             continue
         seen.add(source_id)
 
-        text = re.sub(r"<[^>]+>", " ", chunk)
+        # Remove blocos <script> e <style> antes de extrair texto
+        clean = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", chunk, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"<[^>]+>", " ", clean)
         text = re.sub(r"\s+", " ", text).strip()
+        # Descarta itens com texto suspeito (inline JS sobreviveu)
+        if any(bad in text.lower() for bad in ("datalayer.push", "ga(\\'", "gtag(", "window.")):
+            continue
+        if len(text) < 20:
+            continue
 
         title = None
         m_title = re.search(r"<(?:h[1-4]|strong|b)[^>]*>([^<]+)", chunk, re.IGNORECASE)

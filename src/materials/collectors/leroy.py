@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
+import cloudscraper
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +32,18 @@ HEADERS = {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     ),
-    "Accept": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+    "Referer": f"{BASE_URL}/",
     # Leroy detecta geo por IP — sem cookie. GitHub Actions runner está em
     # outros estados; preço regional Marília só vem se runner estiver no Brasil.
     # Para forçar geo, passar cookie 'userLocation' no futuro.
+}
+
+HTML_HEADERS = {
+    "User-Agent": HEADERS["User-Agent"],
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": HEADERS["Accept-Language"],
 }
 
 
@@ -65,40 +73,53 @@ def search_products(
     """Busca produtos. Pagina até max_results."""
     results: list[LeroyItem] = []
 
-    with httpx.Client(headers=HEADERS, timeout=timeout, follow_redirects=True) as client:
-        page = 1
-        while len(results) < max_results:
-            params = {"term": query, "page": page, "pageSize": page_size}
-            try:
-                resp = client.get(f"{BASE_URL}/search", params=params)
-            except httpx.HTTPError as e:
-                logger.warning(f"[leroy] HTTP error em '{query}' page={page}: {e}")
+    # cloudscraper já injeta UA + bot challenge tokens. NÃO sobrescrever
+    # User-Agent — só passar Accept pra o endpoint responder JSON.
+    client = cloudscraper.create_scraper(
+        browser={"browser": "chrome", "platform": "darwin", "desktop": True}
+    )
+    # Warm-up na home pra capturar cookies do Akamai bot manager.
+    try:
+        client.get(BASE_URL, timeout=timeout)
+    except Exception as e:
+        logger.debug(f"[leroy] warm-up falhou (segue): {e}")
+
+    json_headers = {"Accept": "application/json"}
+    page = 1
+    while len(results) < max_results:
+        params = {"term": query, "page": page, "pageSize": page_size}
+        try:
+            resp = client.get(
+                f"{BASE_URL}/search", params=params, headers=json_headers, timeout=timeout
+            )
+        except Exception as e:
+            logger.warning(f"[leroy] HTTP error em '{query}' page={page}: {e}")
+            break
+
+        if resp.status_code != 200:
+            logger.warning(f"[leroy] HTTP {resp.status_code} em '{query}' page={page}")
+            break
+
+        try:
+            data = resp.json()
+        except ValueError:
+            logger.warning(f"[leroy] JSON inválido em '{query}' page={page}")
+            break
+
+        products = data.get("products") or []
+        if not products:
+            break
+
+        for prod in products:
+            item = _parse_product(prod)
+            if item is not None:
+                results.append(item)
+            if len(results) >= max_results:
                 break
 
-            if resp.status_code != 200:
-                logger.warning(f"[leroy] HTTP {resp.status_code} em '{query}' page={page}")
-                break
-
-            try:
-                data = resp.json()
-            except ValueError:
-                logger.warning(f"[leroy] JSON inválido em '{query}' page={page}")
-                break
-
-            products = data.get("products") or []
-            if not products:
-                break
-
-            for prod in products:
-                item = _parse_product(prod)
-                if item is not None:
-                    results.append(item)
-                if len(results) >= max_results:
-                    break
-
-            if len(products) < page_size:
-                break
-            page += 1
+        if len(products) < page_size:
+            break
+        page += 1
 
     return results
 

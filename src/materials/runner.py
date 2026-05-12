@@ -56,7 +56,7 @@ def run(supplier_filter: str | None = None, dry_run: bool = False) -> dict[str, 
     logger.info(f"[materials] {len(seeds)} SKUs seed carregados")
 
     sku_id_by_seed = _upsert_seed_skus(db, seeds, dry_run=dry_run)
-    candidates = _load_sku_candidates(db, sku_id_by_seed, seeds)
+    candidates = _load_sku_candidates(db, sku_id_by_seed, seeds, dry_run=dry_run)
     supplier_id_by_slug = _load_active_suppliers(db)
 
     if supplier_filter:
@@ -170,11 +170,27 @@ def _load_sku_candidates(
     db,
     sku_id_by_seed: dict[str, int],
     seeds: list[dict],
+    *,
+    dry_run: bool = False,
 ) -> list[SkuCandidate]:
     """Constrói lista de candidatos para o matcher.
 
-    Usa todos os SKUs com flag seed=true (inclui descobertos em runs anteriores).
+    Em dry-run, usa os próprios seeds em memória com id sintético (índice).
+    Caso normal, usa todos os SKUs com flag seed=true no banco (inclui SKUs
+    descobertos em runs anteriores).
     """
+    if dry_run:
+        return [
+            SkuCandidate(
+                id=-(idx + 1),
+                canonical_name=s["canonical_name"],
+                brand=s.get("brand"),
+                ean=s.get("ean"),
+                model=s.get("model"),
+            )
+            for idx, s in enumerate(seeds)
+        ]
+
     resp = db.table("material_sku").select("id,canonical_name,brand,model,ean").eq("seed", True).execute()
     return [
         SkuCandidate(
