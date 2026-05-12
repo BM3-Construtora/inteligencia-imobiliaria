@@ -32,10 +32,15 @@ COMMISSION_PCT = float(os.getenv("VIABILITY_COMMISSION_PCT", "2.0"))
 TYPICAL_SALES_MONTHS = int(os.getenv("VIABILITY_SALES_MONTHS", "6"))
 WORKING_CAPITAL_ANNUAL_PCT = float(os.getenv("VIABILITY_CAPITAL_PCT", "18.0"))
 REWORK_BUFFER_PCT = float(os.getenv("VIABILITY_REWORK_PCT", "11.0"))
-TETO_VENDA_DISCOUNT = float(os.getenv("VIABILITY_TETO_DISCOUNT", "0.95"))
+TETO_VENDA_DISCOUNT = float(os.getenv("VIABILITY_TETO_DISCOUNT", "0.90"))
 
 # BDI — BM3 trabalha "no osso", custos diretos + retrabalho 11% cobrem o BDI clássico.
 BDI_PCT = float(os.getenv("VIABILITY_BDI_PCT", "0.15"))
+
+# EFFICIENCY_FACTOR — BM3 constrói ~15% mais barato que SINAPI puro
+# (Casa 1 Santa Antonieta: SINAPI 2020 R$1500/m² × 50m² = R$75k vs real R$64k bruto).
+# Multiplica custo_m2 final pra ajustar pra realidade do construtor.
+EFFICIENCY_FACTOR = float(os.getenv("VIABILITY_EFFICIENCY", "0.85"))
 
 # ============================================================
 # MCMV 2026 — Atualizado conforme Portaria MCID mar/2026
@@ -154,7 +159,7 @@ def calc_cost_breakdown(
     Returns:
         Dict with all cost line items, VGV, lucro, margem, ROI.
     """
-    custo_m2 = sinapi_per_m2 * custo_multiplier
+    custo_m2 = sinapi_per_m2 * custo_multiplier * EFFICIENCY_FACTOR
     custo_construcao_base = area_total * custo_m2
     custo_bdi = custo_construcao_base * BDI_PCT
     custo_construcao = custo_construcao_base + custo_bdi
@@ -228,7 +233,7 @@ def simulate_project(
         return None
 
     sinapi = sinapi_cost or _get_sinapi_cost()
-    custo_m2 = sinapi * faixa["custo_multiplier"]
+    custo_m2 = sinapi * faixa["custo_multiplier"] * EFFICIENCY_FACTOR
 
     # --- Units calculation ---
     # Modelo BM3: casas individuais em lotes separados.
