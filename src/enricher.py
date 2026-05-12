@@ -162,14 +162,16 @@ def _build_candidates(listing: dict[str, Any]) -> list[tuple[str, str]]:
         head = f"{street} {number}".strip() if number else street
         out.append(("precise", f"{head}, {neigh}, {city}, {state}, Brasil"))
 
+    if street:
+        head = f"{street} {number}".strip() if number else street
+        out.append(("precise", f"{head}, {city}, {state}, Brasil"))
+
     if neigh:
         out.append(("neighborhood", f"{neigh}, {city}, {state}, Brasil"))
 
-    out.append(("city_fallback", f"{city}, {state}, Brasil"))
-
-    # Need >=2 parts of signal (more than just city) for first try; city fallback always last.
-    if len(out) == 1:  # only city_fallback present
-        return []
+    # Skip city centroid: collapses everything onto Marília center, which
+    # falsely satisfies geo_match in the deduplicator. Only geocode when we
+    # have street- or neighborhood-level signal.
     return out
 
 

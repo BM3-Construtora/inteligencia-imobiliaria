@@ -329,16 +329,23 @@ def _run_lgbm(
     y_te = y_arr[idx_te]
 
     # --- Train one model per quantile ---
+    # Calibração 2026-05-11: coverage P25-P75 estava 31.7% (target 50%).
+    # Modelo apertado demais — aumentar regularização e suavizar splits.
     models: dict[float, Any] = {}
     for q in QUANTILES:
         m = lgb.LGBMRegressor(
             objective="quantile",
             alpha=q,
-            n_estimators=300,
-            learning_rate=0.05,
-            num_leaves=31,
-            max_depth=-1,
-            min_data_in_leaf=10,
+            n_estimators=400,
+            learning_rate=0.04,
+            num_leaves=15,           # 31 → 15: árvore mais rasa
+            max_depth=6,             # cap depth explícito
+            min_data_in_leaf=25,     # 10 → 25: mais data por leaf
+            feature_fraction=0.85,
+            bagging_fraction=0.85,
+            bagging_freq=3,
+            reg_alpha=0.1,           # L1
+            reg_lambda=0.2,          # L2
             random_state=42,
             verbosity=-1,
         )

@@ -1,0 +1,29 @@
+name: Daily Materials Pipeline
+
+on:
+  schedule:
+    # 07:00 BRT = 10:00 UTC (1h depois do pipeline de imóveis)
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+jobs:
+  collect-materials:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - name: Run materials pipeline
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 2
+          command: python -m src.materials.runner

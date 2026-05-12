@@ -5,6 +5,7 @@ Cada módulo expõe `run_collector()` retornando
 
 Sinais coletados:
 - leilao_caixa       — leilões de imóveis Caixa filtrados por Marília-SP
+- leilao_generico    — feed configurável (LEILOES_FEED_URL) HTML/RSS de leiloeiros
 - iptu_devedor       — lista de dívida ativa do município
 - alvara_prefeitura  — alvarás de construção via Diário Oficial Municipal
 - inventario_tjsp    — processos de inventário (DataJud CNJ)
@@ -17,10 +18,12 @@ from src.collectors.off_market import (
     inventario_tjsp,
     iptu_devedor,
     leilao_caixa,
+    leilao_generico,
 )
 
 __all__ = [
     "leilao_caixa",
+    "leilao_generico",
     "iptu_devedor",
     "alvara_prefeitura",
     "inventario_tjsp",

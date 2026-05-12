@@ -1,0 +1,131 @@
+{
+  "_meta": {
+    "description": "10 SKUs-âncora do MVP de materiais. EANs vão sendo preenchidos conforme coleta.",
+    "city_target": "Marília-SP",
+    "city_postal_code": "17500000"
+  },
+  "skus": [
+    {
+      "canonical_name": "Cimento CP II F 32 50kg Votoran",
+      "category": "cimento",
+      "brand": "Votoran",
+      "model": "CP II F 32",
+      "unit": "saco_50kg",
+      "weight_kg": 50,
+      "ean": "7898265335677",
+      "bom_stage": "estrutura",
+      "search_queries": [
+        "cimento cp ii f 32 50kg votoran",
+        "cimento votoran 50kg"
+      ]
+    },
+    {
+      "canonical_name": "Cimento CP II Z 32 50kg Votoran",
+      "category": "cimento",
+      "brand": "Votoran",
+      "model": "CP II Z 32",
+      "unit": "saco_50kg",
+      "weight_kg": 50,
+      "ean": "7898265332010",
+      "bom_stage": "estrutura",
+      "search_queries": ["cimento cp ii z 32 50kg votoran"]
+    },
+    {
+      "canonical_name": "Aço CA-50 8mm barra 12m Gerdau",
+      "category": "aco",
+      "brand": "Gerdau",
+      "model": "CA-50 8mm",
+      "unit": "barra_12m",
+      "weight_kg": 4.74,
+      "ean": null,
+      "bom_stage": "estrutura",
+      "search_queries": ["vergalhao ca-50 8mm gerdau", "aço ca50 8mm 12m"]
+    },
+    {
+      "canonical_name": "Aço CA-50 10mm barra 12m Gerdau",
+      "category": "aco",
+      "brand": "Gerdau",
+      "model": "CA-50 10mm",
+      "unit": "barra_12m",
+      "weight_kg": 7.41,
+      "ean": null,
+      "bom_stage": "estrutura",
+      "search_queries": ["vergalhao ca-50 10mm gerdau", "aço ca50 10mm 12m"]
+    },
+    {
+      "canonical_name": "Bloco cerâmico vedação 9x14x19",
+      "category": "bloco",
+      "brand": null,
+      "model": "9x14x19",
+      "unit": "un",
+      "weight_kg": 1.9,
+      "ean": null,
+      "bom_stage": "alvenaria",
+      "search_queries": ["bloco cerâmico 9x14x19", "tijolo baiano 9x14x19"]
+    },
+    {
+      "canonical_name": "Argamassa AC-I 20kg Votomassa",
+      "category": "argamassa",
+      "brand": "Votomassa",
+      "model": "AC-I",
+      "unit": "saco_20kg",
+      "weight_kg": 20,
+      "ean": null,
+      "bom_stage": "revestimento",
+      "search_queries": [
+        "argamassa ac-i 20kg",
+        "argamassa colante 20kg interna"
+      ]
+    },
+    {
+      "canonical_name": "Tubo PVC esgoto 100mm 6m Tigre",
+      "category": "hidraulica",
+      "brand": "Tigre",
+      "model": "Esgoto 100mm",
+      "unit": "barra_6m",
+      "weight_kg": null,
+      "ean": null,
+      "bom_stage": "hidraulica",
+      "search_queries": ["tubo pvc esgoto 100mm tigre", "cano esgoto 100mm 6m"]
+    },
+    {
+      "canonical_name": "Fio flexível 2,5mm² 100m",
+      "category": "eletrica",
+      "brand": null,
+      "model": "Flex 2,5mm²",
+      "unit": "rolo_100m",
+      "weight_kg": null,
+      "ean": null,
+      "bom_stage": "eletrica",
+      "search_queries": ["fio flexivel 2,5mm 100m", "cabo flexivel 2.5mm"]
+    },
+    {
+      "canonical_name": "Tinta acrílica fosca premium 18L",
+      "category": "tinta",
+      "brand": null,
+      "model": "Acrílica fosca 18L",
+      "unit": "balde_18l",
+      "weight_kg": null,
+      "ean": null,
+      "bom_stage": "acabamento",
+      "search_queries": [
+        "tinta acrilica fosca 18 litros",
+        "tinta acrilica premium 18l"
+      ]
+    },
+    {
+      "canonical_name": "Porcelanato esmaltado 60x60",
+      "category": "revestimento",
+      "brand": null,
+      "model": "Esmaltado 60x60",
+      "unit": "m2",
+      "weight_kg": null,
+      "ean": null,
+      "bom_stage": "acabamento",
+      "search_queries": [
+        "porcelanato 60x60 esmaltado",
+        "porcelanato acetinado 60x60"
+      ]
+    }
+  ]
+}

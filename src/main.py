@@ -448,6 +448,7 @@ def main() -> None:
         names = args[1:] if len(args) > 1 else ["leilao_caixa", "iptu", "alvara", "inventario"]
         mapping = {
             "leilao_caixa": "src.collectors.off_market.leilao_caixa",
+            "leilao_generico": "src.collectors.off_market.leilao_generico",
             "iptu": "src.collectors.off_market.iptu_devedor",
             "alvara": "src.collectors.off_market.alvara_prefeitura",
             "inventario": "src.collectors.off_market.inventario_tjsp",
