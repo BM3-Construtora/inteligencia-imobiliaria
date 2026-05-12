@@ -24,14 +24,18 @@ logger = logging.getLogger(__name__)
 # ============================================================
 import os
 
-COMMISSION_PCT = float(os.getenv("VIABILITY_COMMISSION_PCT", "4.0"))
-TYPICAL_SALES_MONTHS = int(os.getenv("VIABILITY_SALES_MONTHS", "12"))
-WORKING_CAPITAL_ANNUAL_PCT = float(os.getenv("VIABILITY_CAPITAL_PCT", "8.0"))
-REWORK_BUFFER_PCT = float(os.getenv("VIABILITY_REWORK_PCT", "3.0"))
-TETO_VENDA_DISCOUNT = float(os.getenv("VIABILITY_TETO_DISCOUNT", "0.97"))
+# Defaults calibrados com dados reais BM3 (3 projetos: 1 vendido + 2 em construção)
+# Casa 1 (Santa Antonieta, vendida 2020): margem bruta 24%, extras 11% do total,
+# vendida direto sem corretora, 8 meses obra.
+# Casa 2/3 (Santa Clara, paradas): estouro orçamento 11%, 52% pago em cartão.
+COMMISSION_PCT = float(os.getenv("VIABILITY_COMMISSION_PCT", "2.0"))
+TYPICAL_SALES_MONTHS = int(os.getenv("VIABILITY_SALES_MONTHS", "6"))
+WORKING_CAPITAL_ANNUAL_PCT = float(os.getenv("VIABILITY_CAPITAL_PCT", "18.0"))
+REWORK_BUFFER_PCT = float(os.getenv("VIABILITY_REWORK_PCT", "11.0"))
+TETO_VENDA_DISCOUNT = float(os.getenv("VIABILITY_TETO_DISCOUNT", "0.95"))
 
-# BDI (Benefícios e Despesas Indiretas) — padrão MCMV construtoras pequenas/médias
-BDI_PCT = float(os.getenv("VIABILITY_BDI_PCT", "0.22"))
+# BDI — BM3 trabalha "no osso", custos diretos + retrabalho 11% cobrem o BDI clássico.
+BDI_PCT = float(os.getenv("VIABILITY_BDI_PCT", "0.15"))
 
 # ============================================================
 # MCMV 2026 — Atualizado conforme Portaria MCID mar/2026
