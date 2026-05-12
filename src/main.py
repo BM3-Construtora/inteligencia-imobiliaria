@@ -70,6 +70,7 @@ Comandos:
   iptu-planta            Coleta planta genérica de valores IPTU (LC 672/2013)
   labor                  Coleta índices SIDRA PNAD-C (rendimento/ocupados construção SP)
   construction-timeline  Join alvará × habite-se → prazo/custo real por bairro
+  obras                  Coleta obras públicas municipais (API dados-abertos, 2017-atual)
   distress               Scora sinais off-market + envia top 5 Telegram
   regulatory             Avalia signals regulatorios (zoneamento/APP/vendedor)
   vision [N]             Computer Vision satelite (default 50 listings)
@@ -503,6 +504,11 @@ def main() -> None:
         logger.info("=== Starting construction timeline analyzer ===")
         s = run_join_analyzer()
         logger.info(f"=== construction-timeline done: {s} ===")
+    elif command == "obras":
+        from src.collectors.obras_publicas_marilia import run_collector as run_obras
+        logger.info("=== Starting Obras Públicas Marília collector ===")
+        s = run_obras()
+        logger.info(f"=== obras done: {s} ===")
     elif command == "distress":
         from src.distress import run_distress_scorer, send_daily_top_telegram
         logger.info("=== Starting distress scorer ===")
