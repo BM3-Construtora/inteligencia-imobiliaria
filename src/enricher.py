@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_HEADERS = {"User-Agent": "MariliaBot/1.0 (inteligencia-imobiliaria)"}
 REQUEST_DELAY = 1.1  # Nominatim: max 1 req/sec
+
+OPENCAGE_URL = "https://api.opencagedata.com/geocode/v1/json"
+# Set OPENCAGE_API_KEY in .env to use OpenCage (2500 req/day free) before Nominatim
 MARILIA_LAT = -22.21
 MARILIA_LNG = -49.95
 MAX_DISTANCE_KM = 50.0
@@ -178,14 +181,20 @@ def _build_candidates(listing: dict[str, Any]) -> list[tuple[str, str]]:
 def _geocode_with_candidates(
     db: Any, candidates: list[tuple[str, str]], stats: dict[str, int]
 ) -> Optional[tuple[float, float, str]]:
+    opencage_key = os.getenv("OPENCAGE_API_KEY")
     for tier, query in candidates:
         coords = _lookup_cache(db, query, stats)
         if coords:
             return coords[0], coords[1], tier
 
-        coords = _nominatim_request(query)
+        if opencage_key:
+            coords = _opencage_request(query, opencage_key)
+            provider = "opencage"
+        else:
+            coords = _nominatim_request(query)
+            provider = "nominatim"
+
         if coords:
-            provider = "city_centroid" if tier == "city_fallback" else "nominatim"
             _store_cache(db, query, coords, provider)
             return coords[0], coords[1], tier
     return None
@@ -229,6 +238,32 @@ def _store_cache(
         "last_used_at": now,
         "created_at": now,
     }, on_conflict="query_hash").execute()
+
+
+def _opencage_request(query: str, api_key: str) -> Optional[tuple[float, float]]:
+    params = {
+        "q": query,
+        "key": api_key,
+        "limit": 1,
+        "countrycode": "br",
+        "language": "pt",
+        "no_annotations": 1,
+    }
+    try:
+        resp = httpx.get(OPENCAGE_URL, params=params, timeout=TIMEOUT)
+        resp.raise_for_status()
+        results = resp.json().get("results") or []
+        if not results:
+            return None
+        geom = results[0]["geometry"]
+        lat, lon = float(geom["lat"]), float(geom["lng"])
+        if _haversine(lat, lon, MARILIA_LAT, MARILIA_LNG) > MAX_DISTANCE_KM:
+            logger.debug(f"[enricher] OpenCage far result discarded: {query}")
+            return None
+        return lat, lon
+    except Exception as e:
+        logger.debug(f"[enricher] OpenCage error: {e}")
+        return None
 
 
 def _nominatim_request(query: str) -> Optional[tuple[float, float]]:

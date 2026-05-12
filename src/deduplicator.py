@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from src.address import address_similarity, normalize_neighborhood
@@ -57,17 +57,18 @@ def run_deduplicator() -> dict[str, int]:
     run_id = run_result.data[0]["id"] if run_result.data else None
 
     try:
+        SELECT_FIELDS = ("id, source, source_id, neighborhood, address, street, number, "
+                         "sale_price, total_area, latitude, longitude, "
+                         "property_type, bedrooms, bathrooms, title, zip_code, "
+                         "built_area, last_seen_at, main_image_url, description, "
+                         "listing_fingerprint")
         listings: list[dict] = []
         page_size = 1000
         offset = 0
         while True:
             result = (
                 db.table("listings")
-                .select("id, source, source_id, neighborhood, address, street, number, "
-                        "sale_price, total_area, latitude, longitude, "
-                        "property_type, bedrooms, bathrooms, title, zip_code, "
-                        "built_area, last_seen_at, main_image_url, description, "
-                        "listing_fingerprint")
+                .select(SELECT_FIELDS)
                 .eq("is_active", True)
                 .is_("canonical_listing_id", "null")
                 .range(offset, offset + page_size - 1)
@@ -79,7 +80,33 @@ def run_deduplicator() -> dict[str, int]:
             if len(result.data) < page_size:
                 break
             offset += page_size
-        logger.info(f"[dedup] Loaded {len(listings)} active listings")
+
+        # Also include recently-deactivated listings (last 90 days) that were
+        # never deduped — they may match active listings across portals.
+        ninety_days_ago = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        offset = 0
+        inactive_seen: set[int] = {l["id"] for l in listings}
+        while True:
+            result = (
+                db.table("listings")
+                .select(SELECT_FIELDS)
+                .eq("is_active", False)
+                .is_("canonical_listing_id", "null")
+                .gte("last_seen_at", ninety_days_ago)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            if not result.data:
+                break
+            for row in result.data:
+                if row["id"] not in inactive_seen:
+                    listings.append(row)
+                    inactive_seen.add(row["id"])
+            if len(result.data) < page_size:
+                break
+            offset += page_size
+
+        logger.info(f"[dedup] Loaded {len(listings)} listings (active + inactive 90d)")
 
         by_neighborhood: dict[str, list[dict]] = {}
         for l in listings:

@@ -209,12 +209,13 @@ def _update_all_neighborhoods(db: Any) -> int:
             break
         offset += page_size
 
-    # 2. Fetch deactivated listings for absorption
+    # 2. Fetch deactivated listings for absorption (canonical only — avoid double-counting)
     deactivated: list[dict] = []
     result = (
         db.table("listings")
         .select("neighborhood, deactivated_at, first_seen_at")
         .eq("is_active", False)
+        .is_("canonical_listing_id", "null")
         .not_.is_("deactivated_at", "null")
         .not_.is_("neighborhood", "null")
         .gte("deactivated_at", thirty_days_ago)
@@ -222,11 +223,12 @@ def _update_all_neighborhoods(db: Any) -> int:
     )
     deactivated = result.data or []
 
-    # 3. Fetch new listings (last 30 days)
+    # 3. Fetch new listings (last 30 days, canonical only)
     new_listings: list[dict] = []
     result = (
         db.table("listings")
         .select("neighborhood, first_seen_at")
+        .is_("canonical_listing_id", "null")
         .not_.is_("neighborhood", "null")
         .gte("first_seen_at", thirty_days_ago)
         .execute()

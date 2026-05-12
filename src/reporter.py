@@ -96,10 +96,10 @@ def run_weekly_report() -> dict[str, int]:
 def _gather_report_data(db: Any) -> dict[str, Any]:
     """Gather data for the weekly report."""
     # Total listings
-    total = db.table("listings").select("id", count="exact").eq("is_active", True).execute()
+    total = db.table("listings").select("id", count="exact").eq("is_active", True).is_("canonical_listing_id", "null").execute()
 
     # Total land
-    land = db.table("listings").select("id", count="exact").eq("is_active", True).eq("property_type", "land").execute()
+    land = db.table("listings").select("id", count="exact").eq("is_active", True).is_("canonical_listing_id", "null").eq("property_type", "land").execute()
 
     # Neighborhoods count
     neighs = db.table("neighborhoods").select("id", count="exact").execute()
