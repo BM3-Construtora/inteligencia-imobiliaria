@@ -71,6 +71,9 @@ Comandos:
   labor                  Coleta índices SIDRA PNAD-C (rendimento/ocupados construção SP)
   construction-timeline  Join alvará × habite-se → prazo/custo real por bairro
   obras                  Coleta obras públicas municipais (API dados-abertos, 2017-atual)
+  receitas               Coleta ITBI + Taxa de Licença de Obras mensais (transparência, 2021-atual)
+  parcelamento           Coleta parcelamentos de solo aprovados no DOM-MAR
+  licitacoes             Coleta licitações de obras públicas (API dados-abertos, 2020-atual)
   distress               Scora sinais off-market + envia top 5 Telegram
   regulatory             Avalia signals regulatorios (zoneamento/APP/vendedor)
   vision [N]             Computer Vision satelite (default 50 listings)
@@ -509,6 +512,21 @@ def main() -> None:
         logger.info("=== Starting Obras Públicas Marília collector ===")
         s = run_obras()
         logger.info(f"=== obras done: {s} ===")
+    elif command == "receitas":
+        from src.collectors.receitas_marilia import run_collector as run_receitas
+        logger.info("=== Starting Receitas Marília collector ===")
+        s = run_receitas()
+        logger.info(f"=== receitas done: {s} ===")
+    elif command == "parcelamento":
+        from src.collectors.parcelamento_solo_marilia import run_collector as run_parcelamento
+        logger.info("=== Starting Parcelamento de Solo collector ===")
+        s = run_parcelamento()
+        logger.info(f"=== parcelamento done: {s} ===")
+    elif command == "licitacoes":
+        from src.collectors.licitacoes_obras_marilia import run_collector as run_licitacoes
+        logger.info("=== Starting Licitações de Obras collector ===")
+        s = run_licitacoes()
+        logger.info(f"=== licitacoes done: {s} ===")
     elif command == "distress":
         from src.distress import run_distress_scorer, send_daily_top_telegram
         logger.info("=== Starting distress scorer ===")
