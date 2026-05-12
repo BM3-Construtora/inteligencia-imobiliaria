@@ -74,65 +74,36 @@ def run_market_heat() -> dict[str, int]:
 
 
 def _calc_heat(n: dict[str, Any]) -> int:
-    """Calculate composite heat score 0-100.
+    """Calculate composite heat score 0-100 (continuous to avoid degenerate distribution).
 
-    Components:
-    - Absorption rate (30%): higher = hotter
-    - Price trend proxy via new/removed ratio (25%)
-    - Avg days on market (20%): lower = hotter
-    - New listings velocity (15%): more new = more interest
-    - Risk inverse (10%): lower risk = more attractive
+    Components com pesos:
+    - Absorption rate (30 pts): normalizado 0-10%+ → 0-30
+    - Sales/new ratio (25 pts): normalizado 0-1.5x → 0-25
+    - Days on market (20 pts): 0d=20, 180d=0 linear
+    - New listings velocity (15 pts): 0-15 listings/mês → 0-15
+    - Risk inverse (10 pts): risk 1=10, risk 4+=0 linear
     """
-    score = 0.0
-
-    # Absorption (30 pts): >10% = 30, 5-10% = 20, 1-5% = 10, <1% = 0
     absorption = float(n.get("absorption_rate") or 0)
-    if absorption > 10:
-        score += 30
-    elif absorption > 5:
-        score += 20
-    elif absorption > 1:
-        score += 10
+    score_abs = 30 * min(absorption / 10.0, 1.0)
 
-    # Sales vs new ratio (25 pts): more removals than new = healthy demand
     removed = int(n.get("removed_last_30d") or 0)
     new = int(n.get("new_last_30d") or 0)
     if removed > 0 and new > 0:
         ratio = removed / new
-        if ratio > 1.0:
-            score += 25  # More selling than listing = hot
-        elif ratio > 0.5:
-            score += 15
-        elif ratio > 0.2:
-            score += 8
+        score_ratio = 25 * min(ratio / 1.5, 1.0)
+    else:
+        score_ratio = 0.0
 
-    # Days on market (20 pts): <30 = 20, 30-60 = 15, 60-120 = 8, >120 = 0
     dom = int(n.get("avg_days_on_market") or 999)
-    if dom < 30:
-        score += 20
-    elif dom < 60:
-        score += 15
-    elif dom < 120:
-        score += 8
+    score_dom = 20 * max(0.0, 1.0 - dom / 180.0)
 
-    # New listings velocity (15 pts): >10/month = 15, 5-10 = 10, 1-5 = 5
-    if new > 10:
-        score += 15
-    elif new > 5:
-        score += 10
-    elif new > 1:
-        score += 5
+    score_new = 15 * min(new / 15.0, 1.0)
 
-    # Risk inverse (10 pts): risk <2 = 10, 2-3 = 6, 3-4 = 3, >4 = 0
     risk = float(n.get("avg_risk_score") or 3)
-    if risk < 2:
-        score += 10
-    elif risk < 3:
-        score += 6
-    elif risk < 4:
-        score += 3
+    score_risk = 10 * max(0.0, 1.0 - (risk - 1) / 3.0)
 
-    return min(100, max(0, int(score)))
+    total = score_abs + score_ratio + score_dom + score_new + score_risk
+    return min(100, max(0, int(round(total))))
 
 
 def _percentile(sorted_vals: list[int], pct: float) -> int:
