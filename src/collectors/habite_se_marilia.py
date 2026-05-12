@@ -1,28 +1,20 @@
 """Coleta Habite-se (certificados de conclusão de obra) — Marília-SP.
 
-Status da fonte (pesquisa 2026-05):
-- Diário Oficial do Município de Marília: https://www.marilia.sp.gov.br/portal/diario-oficial
-  (URL canônica também espelhada em diariooficial.marilia.sp.gov.br)
-- Não foi localizado endpoint público estruturado (RSS/JSON/API) listando
-  exclusivamente Habite-se. A prática observada é que o município publica os
-  certificados como atos da Secretaria de Planejamento Urbano dentro das edições
-  diárias em PDF.
-- Estratégia: parsear PDFs do DOM-MAR procurando blocos "HABITE-SE",
-  "CERTIFICADO DE CONCLUSÃO" ou "VISTORIA FINAL".
-- Caso seja necessário acesso retroativo estruturado, abrir LAI à Secretaria de
-  Planejamento Urbano (Lei 12.527/2011).
+Fonte: API de Dados Abertos do Diário Oficial Municipal de Marília.
+  https://www.marilia.sp.gov.br/portal/dados-abertos/diario-oficial/[ANO]
 
-Configuração:
-- Env `HABITE_SE_FEED_URL` aponta para a edição/listagem PDF/HTML a ser parseada.
-  Pode ser uma URL única (edição mais recente) ou um índice HTML cujo conteúdo
-  será raspado em busca dos termos-chave.
-- Sem URL setada, faz log warning e retorna stats zerados (não falha).
+Retorna JSON com todas as edições do ano, cada uma com campo `descricao`
+contendo o texto completo da publicação. Sem autenticação, sem LAI.
+
+Configuração (opcional):
+  HABITE_SE_START_YEAR  — ano inicial da varredura (default: ano atual - 1)
+  HABITE_SE_END_YEAR    — ano final (default: ano atual)
+  HABITE_SE_FEED_URL    — se setada, usa URL direta em vez da API (legado/override)
 
 Cruzamento com alvará:
-- O coletor tenta extrair `process_number` do snippet; quando casa com
-  off_market_signals.source_id (signal_type='permit') do `alvara_prefeitura`,
-  preenche `alvara_reference` permitindo calcular prazo médio (issue_date do
-  habite-se vs event_date do alvará) e custo real por região.
+  process_number extraído do texto é normalizado (só dígitos) e cruzado com
+  off_market_signals.source_id (source=alvara_prefeitura) para calcular
+  prazo real de obra via construction_timeline.py.
 """
 
 from __future__ import annotations
@@ -32,6 +24,7 @@ import io
 import logging
 import os
 import re
+import time
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -45,18 +38,23 @@ SOURCE = "habite_se_marilia"
 CITY = "Marília"
 STATE = "SP"
 
+DOM_MAR_API = "https://www.marilia.sp.gov.br/portal/dados-abertos/diario-oficial/{year}"
+_THIS_YEAR = datetime.now().year
+
 HABITE_SE_FEED_URL = os.getenv("HABITE_SE_FEED_URL", "").strip()
+HABITE_SE_START_YEAR = int(os.getenv("HABITE_SE_START_YEAR", str(_THIS_YEAR - 1)))
+HABITE_SE_END_YEAR = int(os.getenv("HABITE_SE_END_YEAR", str(_THIS_YEAR)))
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     ),
-    "Accept": "*/*",
+    "Accept": "application/json, */*",
 }
 TIMEOUT = 60
+SLEEP_BETWEEN_YEARS = 2.0
 
-# Termos que indicam um bloco de Habite-se no Diário Oficial.
 RE_HABITE = re.compile(
     r"(habite[-\s]?se|certificado de conclus[ãa]o(?: de obra| parcial| total)?|vistoria final)"
     r"[^\n]{0,400}",
@@ -81,11 +79,10 @@ RE_COST = re.compile(
     r"[^\d]{0,30}r?\$?\s*([\d\.]+,\d{2})",
     re.IGNORECASE,
 )
-RE_DATE = re.compile(
-    r"(\d{2})/(\d{2})/(\d{4})"
-)
+RE_DATE = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
 RE_NEIGHBORHOOD = re.compile(
-    r"(?:bairro|jardim|jd\.?|parque|vila|conjunto)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s]{2,40})",
+    r"(?:bairro|jardim|jd\.?|parque|vila|conjunto)\s+"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s]{2,40})",
 )
 RE_ADDRESS = re.compile(
     r"(?:rua|avenida|av\.?|travessa|alameda|al\.?|estrada|praça)\s+"
@@ -95,42 +92,34 @@ RE_ADDRESS = re.compile(
 
 
 def run_collector() -> dict[str, int]:
-    """Coleta Habite-se publicados e upserta em habite_se_records."""
+    """Coleta Habite-se do DOM-MAR e upserta em habite_se_records."""
     stats = {"processed": 0, "created": 0, "failed": 0}
-
-    if not HABITE_SE_FEED_URL:
-        logger.warning(
-            f"[{SOURCE}] HABITE_SE_FEED_URL não configurada — pulando coleta"
-        )
-        return stats
-
     db = get_client()
     run_id = _start_run(db)
 
     try:
-        content, ct = _download(HABITE_SE_FEED_URL)
-        if not content:
-            _finish_run(db, run_id, "completed", stats)
-            return stats
+        if HABITE_SE_FEED_URL:
+            # Modo legado: URL única (PDF ou HTML)
+            records = _collect_from_url(HABITE_SE_FEED_URL)
+        else:
+            # Modo API: iterar anos via dados-abertos DOM-MAR
+            records = _collect_from_api()
 
-        records = _parse(content, ct)
-        logger.info(f"[{SOURCE}] Parsed {len(records)} habite-se records")
+        logger.info(f"[{SOURCE}] Total habite-se encontrados: {len(records)}")
 
-        # Carrega alvarás existentes para cruzar por número de processo (1 query).
         alvara_index = _load_alvara_index(db)
 
         for rec in records:
             stats["processed"] += 1
             try:
                 rec["alvara_reference"] = _match_alvara(rec, alvara_index)
-                payload = _to_row(rec)
                 db.table("habite_se_records").upsert(
-                    payload, on_conflict="source_id"
+                    _to_row(rec), on_conflict="source_id"
                 ).execute()
                 stats["created"] += 1
             except Exception:
                 stats["failed"] += 1
-                logger.exception(f"[{SOURCE}] Failed to upsert record")
+                logger.exception(f"[{SOURCE}] upsert falhou: {rec.get('source_id')}")
 
         logger.info(
             f"[{SOURCE}] Done: processed={stats['processed']} "
@@ -139,36 +128,103 @@ def run_collector() -> dict[str, int]:
         _finish_run(db, run_id, "completed", stats)
 
     except Exception as e:
-        logger.exception(f"[{SOURCE}] Collector failed")
+        logger.exception(f"[{SOURCE}] Collector falhou")
         _finish_run(db, run_id, "failed", stats, str(e))
 
     return stats
 
 
-def _download(url: str) -> tuple[bytes, str]:
+# ---------------------------------------------------------------------------
+# Coleta via API dados-abertos DOM-MAR
+# ---------------------------------------------------------------------------
+
+def _collect_from_api() -> list[dict[str, Any]]:
+    years = range(HABITE_SE_START_YEAR, HABITE_SE_END_YEAR + 1)
+    all_records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    with httpx.Client(headers=HEADERS, timeout=TIMEOUT, follow_redirects=True) as client:
+        for year in years:
+            url = DOM_MAR_API.format(year=year)
+            editions = _fetch_editions(client, url, year)
+            logger.info(f"[{SOURCE}] Ano {year}: {len(editions)} edições")
+
+            for ed in editions:
+                text = ed.get("descricao") or ""
+                if not text:
+                    continue
+                if not RE_HABITE.search(text):
+                    continue  # skip edições sem habite-se (evita parse desnecessário)
+
+                ed_date = _parse_edition_date(ed)
+                ed_id = str(ed.get("edicao") or ed.get("id") or "")
+                records = _extract_habite_se(text, fallback_date=ed_date, edition_id=ed_id)
+
+                for r in records:
+                    if r["source_id"] not in seen_ids:
+                        seen_ids.add(r["source_id"])
+                        all_records.append(r)
+
+            if year != HABITE_SE_END_YEAR:
+                time.sleep(SLEEP_BETWEEN_YEARS)
+
+    return all_records
+
+
+def _fetch_editions(client: httpx.Client, url: str, year: int) -> list[dict[str, Any]]:
+    try:
+        resp = client.get(url)
+        if resp.status_code != 200:
+            logger.warning(f"[{SOURCE}] Ano {year}: HTTP {resp.status_code}")
+            return []
+        data = resp.json()
+        # API retorna {"dados": [...]} — fallback para outros formatos comuns
+        if isinstance(data, list):
+            return data
+        for key in ("dados", "data", "items", "edicoes", "results"):
+            if key in data and isinstance(data[key], list):
+                return data[key]
+        logger.warning(f"[{SOURCE}] Ano {year}: formato inesperado — keys={list(data.keys())[:5]}")
+        return []
+    except Exception:
+        logger.exception(f"[{SOURCE}] Erro ao buscar edições {year}")
+        return []
+
+
+def _parse_edition_date(ed: dict[str, Any]) -> date | None:
+    raw = ed.get("data") or ed.get("date") or ed.get("publicacao") or ""
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(str(raw)[:19], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Coleta via URL direta (legado/override)
+# ---------------------------------------------------------------------------
+
+def _collect_from_url(url: str) -> list[dict[str, Any]]:
     try:
         with httpx.Client(headers=HEADERS, timeout=TIMEOUT, follow_redirects=True) as c:
             resp = c.get(url)
             if resp.status_code != 200:
-                logger.warning(f"[{SOURCE}] HTTP {resp.status_code}")
-                return b"", ""
-            return resp.content, resp.headers.get("content-type", "")
+                logger.warning(f"[{SOURCE}] HTTP {resp.status_code} — {url}")
+                return []
+            content = resp.content
+            ct = resp.headers.get("content-type", "")
     except httpx.HTTPError as e:
         logger.warning(f"[{SOURCE}] HTTP error: {e}")
-        return b"", ""
+        return []
 
-
-def _parse(content: bytes, content_type: str) -> list[dict[str, Any]]:
-    ct = (content_type or "").lower()
-    is_pdf = "pdf" in ct or content[:4] == b"%PDF"
-
-    if is_pdf:
+    ct_lower = (ct or "").lower()
+    if "pdf" in ct_lower or content[:4] == b"%PDF":
         text = _pdf_to_text(content)
     else:
-        try:
-            text = content.decode("utf-8", errors="ignore")
-        except Exception:
-            return []
+        text = content.decode("utf-8", errors="ignore")
         text = re.sub(r"<[^>]+>", "\n", text)
 
     return _extract_habite_se(text)
@@ -178,24 +234,32 @@ def _pdf_to_text(content: bytes) -> str:
     try:
         import pdfplumber  # type: ignore
     except ImportError:
-        logger.warning(f"[{SOURCE}] pdfplumber não instalado — pulando PDF")
+        logger.warning(f"[{SOURCE}] pdfplumber não instalado")
         return ""
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             return "\n".join((page.extract_text() or "") for page in pdf.pages)
     except Exception:
-        logger.exception(f"[{SOURCE}] pdfplumber failed")
+        logger.exception(f"[{SOURCE}] pdfplumber falhou")
         return ""
 
 
-def _extract_habite_se(text: str) -> list[dict[str, Any]]:
-    """Procura blocos contendo termos de Habite-se e extrai metadados próximos."""
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+def _extract_habite_se(
+    text: str,
+    fallback_date: date | None = None,
+    edition_id: str = "",
+) -> list[dict[str, Any]]:
     if not text:
         return []
 
     records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
     for m in RE_HABITE.finditer(text):
-        # janela maior que alvará: campos como custo costumam vir 200-400 chars depois.
         snippet = text[max(0, m.start() - 120): m.end() + 400]
         snippet = re.sub(r"\s+", " ", snippet).strip()
 
@@ -203,16 +267,21 @@ def _extract_habite_se(text: str) -> list[dict[str, Any]]:
         area_built = _to_float(_first_match(RE_AREA_BUILT, snippet))
         area_terrain = _to_float(_first_match(RE_AREA_TERRAIN, snippet))
         cost = _to_float(_first_match(RE_COST, snippet))
-        issue_date = _extract_date(snippet)
+        issue_date = _extract_date(snippet) or fallback_date
         neighborhood = _first_match(RE_NEIGHBORHOOD, snippet)
-        address = None
-        m_addr = RE_ADDRESS.search(snippet)
-        if m_addr:
-            address = m_addr.group(0).strip()
+        address = (RE_ADDRESS.search(snippet) or type("", (), {"group": lambda self, n: None})()).group(0)
+        if address:
+            address = address.strip()
 
-        source_id = (
-            proc or hashlib.sha1(snippet.encode("utf-8")).hexdigest()[:16]
-        )
+        # source_id: processo se disponível, senão hash do snippet (prefixado por edição)
+        if proc:
+            source_id = f"{edition_id}_{_normalize_proc(proc)}" if edition_id else _normalize_proc(proc)
+        else:
+            source_id = hashlib.sha1(snippet.encode("utf-8")).hexdigest()[:16]
+
+        if source_id in seen:
+            continue
+        seen.add(source_id)
 
         records.append({
             "source_id": source_id,
@@ -226,22 +295,13 @@ def _extract_habite_se(text: str) -> list[dict[str, Any]]:
             "snippet": snippet[:1000],
         })
 
-    # Deduplicação dentro do batch
-    seen: set[str] = set()
-    out: list[dict[str, Any]] = []
-    for r in records:
-        if r["source_id"] in seen:
-            continue
-        seen.add(r["source_id"])
-        out.append(r)
-    return out
+    return records
 
 
 def _first_match(pattern: re.Pattern[str], text: str) -> str | None:
     m = pattern.search(text)
     if not m:
         return None
-    # groups() retorna a primeira captura quando há; senão o match inteiro.
     return m.group(1) if m.groups() else m.group(0)
 
 
@@ -249,7 +309,6 @@ def _to_float(val: str | None) -> float | None:
     if not val:
         return None
     try:
-        # 1.234,56 -> 1234.56 ; 1234.56 mantém
         cleaned = val.replace(".", "").replace(",", ".") if "," in val else val
         return float(cleaned)
     except ValueError:
@@ -266,8 +325,15 @@ def _extract_date(text: str) -> date | None:
         return None
 
 
+def _normalize_proc(value: str) -> str:
+    return re.sub(r"[^\d]", "", value or "")
+
+
+# ---------------------------------------------------------------------------
+# Índice de alvarás para cruzamento
+# ---------------------------------------------------------------------------
+
 def _load_alvara_index(db: Any) -> dict[str, str]:
-    """Retorna {process_number_normalizado: source_id_do_alvara}."""
     try:
         r = (
             db.table("off_market_signals")
@@ -280,26 +346,24 @@ def _load_alvara_index(db: Any) -> dict[str, str]:
         idx: dict[str, str] = {}
         for row in r.data or []:
             sid = row.get("source_id")
-            if not sid:
-                continue
-            idx[_normalize_proc(sid)] = sid
+            if sid:
+                idx[_normalize_proc(sid)] = sid
         return idx
     except Exception:
         logger.exception(f"[{SOURCE}] Falha ao carregar índice de alvarás")
         return {}
 
 
-def _normalize_proc(value: str) -> str:
-    return re.sub(r"[^\d]", "", value or "")
-
-
 def _match_alvara(rec: dict[str, Any], index: dict[str, str]) -> str | None:
     proc = rec.get("process_number")
     if not proc or not index:
         return None
-    key = _normalize_proc(proc)
-    return index.get(key)
+    return index.get(_normalize_proc(proc))
 
+
+# ---------------------------------------------------------------------------
+# Persistência
+# ---------------------------------------------------------------------------
 
 def _to_row(rec: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
