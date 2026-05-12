@@ -6,7 +6,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from src.area_parser import extract_area
 from src.db import get_client
+from src.fingerprint import compute_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,25 @@ def _validate_area(area: Optional[float]) -> Optional[float]:
     if area > 10_000_000:
         return None  # > 10km², clearly wrong
     return area
+
+
+def _apply_area_fallback(n: dict[str, Any]) -> None:
+    """Fill total_area from title/description when source didn't provide it.
+
+    Mutates n in place. Recomputes price_per_m2 if a value was filled.
+    Restricted to property_type='land' to avoid over-claiming areas for houses
+    where "350m²" in the title usually means built area, not total.
+    """
+    if n.get("total_area") or n.get("property_type") != "land":
+        return
+    area = extract_area(n.get("title")) or extract_area(n.get("description"))
+    if not area:
+        return
+    n["total_area"] = area
+    n["area_inferred"] = True
+    price = n.get("sale_price") or n.get("rent_price")
+    if price and area:
+        n["price_per_m2"] = _calc_price_per_m2(price, area)
 
 
 ACCEPTED_CITIES = {"marilia", "marília"}
@@ -493,6 +514,10 @@ def run_normalizer() -> dict[str, int]:
                         continue
 
                     normalized = normalizer_fn(raw_row["raw_data"])
+                    _apply_area_fallback(normalized)
+                    fp = compute_fingerprint(normalized)
+                    if fp:
+                        normalized["listing_fingerprint"] = fp
 
                     if not _is_marilia(normalized.get("city")):
                         _log_quality(

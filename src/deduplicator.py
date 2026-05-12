@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 MIN_MATCH_SCORE = 0.55
 HIGH_CONFIDENCE = 0.80
+SAME_SOURCE_MIN_SCORE = 0.85  # stricter bar to call two listings from same portal the same property
+FINGERPRINT_SCORE = 0.92
 
 _SOURCE_TIEBREAK = {
     "uniao": 4,
@@ -64,7 +66,8 @@ def run_deduplicator() -> dict[str, int]:
                 .select("id, source, source_id, neighborhood, address, street, number, "
                         "sale_price, total_area, latitude, longitude, "
                         "property_type, bedrooms, bathrooms, title, zip_code, "
-                        "built_area, last_seen_at, main_image_url, description")
+                        "built_area, last_seen_at, main_image_url, description, "
+                        "listing_fingerprint")
                 .eq("is_active", True)
                 .is_("canonical_listing_id", "null")
                 .range(offset, offset + page_size - 1)
@@ -105,6 +108,47 @@ def run_deduplicator() -> dict[str, int]:
             logger.warning(f"[dedup] Failed to preload existing pairs: {e}")
 
         match_pairs: list[dict] = []
+        stats["fingerprint_matches"] = 0
+
+        # Pass 0: deterministic fingerprint match (cheap, runs before scoring).
+        # Two listings sharing a non-null fingerprint are almost certainly the
+        # same property (same street+number+area bucket). Works across portals
+        # AND within the same portal (relistings with new source_id).
+        by_fingerprint: dict[str, list[dict]] = {}
+        for l in listings:
+            fp = l.get("listing_fingerprint")
+            if fp:
+                by_fingerprint.setdefault(fp, []).append(l)
+
+        for fp, fp_group in by_fingerprint.items():
+            if len(fp_group) < 2:
+                continue
+            for i, a in enumerate(fp_group):
+                for b in fp_group[i + 1:]:
+                    if a["property_type"] != b["property_type"]:
+                        continue
+                    a_id, b_id = (a["id"], b["id"]) if a["id"] < b["id"] else (b["id"], a["id"])
+                    pk = (a_id, b_id)
+                    if pk in existing_pairs:
+                        continue
+                    match_pairs.append({
+                        "listing_a_id": a_id,
+                        "listing_b_id": b_id,
+                        "match_score": FINGERPRINT_SCORE,
+                        "match_method": "fingerprint",
+                        "decision_rule": "fingerprint",
+                        "addr_score": None,
+                        "geo_distance_m": None,
+                        "price_diff_pct": None,
+                        "area_diff_pct": None,
+                        "bed_match": None,
+                        "bath_match": None,
+                    })
+                    existing_pairs.add(pk)
+                    stats["matches"] += 1
+                    stats["high_confidence"] += 1
+                    stats["fingerprint_matches"] += 1
+
         for _, group in by_neighborhood.items():
             if len(group) < 2:
                 continue
@@ -139,7 +183,12 @@ def run_deduplicator() -> dict[str, int]:
                             continue
                         seen_pairs.add(pk)
 
-                        if a["source"] == b["source"]:
+                        # Same-source comparison is allowed only when source_id
+                        # differs — catches relistings of the same property under
+                        # a new ad id within the same portal. We hold these to a
+                        # stricter score bar below (SAME_SOURCE_MIN_SCORE).
+                        same_source = a["source"] == b["source"]
+                        if same_source and (a.get("source_id") or "") == (b.get("source_id") or ""):
                             continue
                         if a["property_type"] != b["property_type"]:
                             continue
@@ -164,7 +213,8 @@ def run_deduplicator() -> dict[str, int]:
                             continue
 
                         score = cmp_result["match_score"]
-                        if score < MIN_MATCH_SCORE:
+                        threshold = SAME_SOURCE_MIN_SCORE if same_source else MIN_MATCH_SCORE
+                        if score < threshold:
                             continue
 
                         a_id, b_id = pk
@@ -300,6 +350,7 @@ def _compare(a: dict[str, Any], b: dict[str, Any]) -> Optional[dict[str, Any]]:
 
     location_confirmed = addr_match or geo_match
     financials_confirmed = price_match and area_match
+    is_land = a.get("property_type") == "land"
 
     if (bed_mismatch or bath_mismatch) and not (location_confirmed and financials_confirmed):
         return None
@@ -309,6 +360,20 @@ def _compare(a: dict[str, Any], b: dict[str, Any]) -> Optional[dict[str, Any]]:
     if location_confirmed and financials_confirmed:
         score = 0.95
         decision_rule = "loc+financial"
+    elif is_land and location_confirmed and price_match:
+        # Land has no bed/bath signal; address+price is the strongest available
+        score = 0.88 if addr_match else 0.85
+        decision_rule = "land_loc+price"
+    elif is_land and location_confirmed and area_match:
+        score = 0.86 if addr_match else 0.83
+        decision_rule = "land_loc+area"
+    elif is_land and financials_confirmed:
+        tight = (
+            (price_diff_pct if price_diff_pct is not None else 1) <= 0.05
+            and (area_diff_pct if area_diff_pct is not None else 1) <= 0.05
+        )
+        score = 0.84 if tight else 0.80
+        decision_rule = "land_financial"
     elif location_confirmed and price_match and (bed_match or bath_match):
         score = 0.90
         decision_rule = "loc+price+attrs"
