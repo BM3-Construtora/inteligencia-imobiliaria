@@ -27,6 +27,9 @@ avm = [
     "lightgbm>=4.3",
     "shap>=0.45",
 ]
+scraping = [
+    "playwright>=1.45",
+]
 
 [project.scripts]
 mariliabot = "src.main:main"

@@ -2,9 +2,12 @@
 
 Fonte: https://venda-imoveis.caixa.gov.br/sistema/
 
-Estratégia leve: baixa a página de listagem do estado SP e filtra cidade
-"Marília" em memória. Sem JS rendering pesado. Se a fonte mudar/quebrar,
-retorna 0 created e não trava o pipeline.
+Site Caixa migrou para rendering JS — endpoint `carregaListaImoveis.asp`
+não retorna mais HTML usável via simples POST. Solução: Playwright headless
+preenche o form (Estado=SP, Cidade=Marília) e extrai os resultados após render.
+
+Se Playwright não instalado ou fonte indisponível, retorna 0 created sem
+travar o pipeline. Instale com: `pip install playwright && playwright install chromium`.
 """
 
 from __future__ import annotations
@@ -13,8 +16,6 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
-
-import httpx
 
 from src.db import get_client
 
@@ -25,22 +26,10 @@ SIGNAL_TYPE = "auction"
 CITY = "Marília"
 STATE = "SP"
 
-# Endpoint público da listagem de SP. O site da Caixa tem um form que
-# faz POST pra esta URL. Em caso de bloqueio (Cloudflare/captcha) retornamos 0.
-CAIXA_LIST_URL = (
-    "https://venda-imoveis.caixa.gov.br/sistema/carregaListaImoveis.asp"
-)
+CAIXA_SEARCH_URL = "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis"
+CAIXA_BASE = "https://venda-imoveis.caixa.gov.br/sistema/"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml",
-    "Accept-Language": "pt-BR,pt;q=0.9",
-}
-
-TIMEOUT = 30
+TIMEOUT_MS = 45_000
 
 
 def run_collector() -> dict[str, int]:
@@ -80,74 +69,124 @@ def run_collector() -> dict[str, int]:
 
 
 def _fetch_marilia_listings() -> list[dict[str, Any]]:
-    """Busca listagem de SP e filtra Marília. Robusto a quebra de HTML."""
-    # Body POST mínimo — formulário expõe estado/cidade. Mantém só estado=SP
-    # e deixa cidade vazia (retorna todos os imóveis de SP).
-    form = {
-        "hdn_estado": STATE,
-        "hdn_cidade": "",
-        "hdn_bairro": "",
-        "hdn_tp_venda": "",
-        "hdn_tp_imovel": "",
-        "hdn_area_util": "",
-        "hdn_vr_venda": "",
-        "hdn_quartos": "",
-    }
+    """Renderiza busca-imovel.asp com Playwright, filtra Marília-SP, extrai items.
+
+    Fluxo:
+    1. Abre busca-imovel.asp
+    2. Aguarda <select id=cmb_estado>, seleciona SP
+    3. Aguarda popular <select id=cmb_cidade> via JS, seleciona Marília
+    4. Submete (btn_next1) — espera lista renderizar
+    5. Extrai blocos com `hdnImovel=<id>` + valor + área + endereço
+    """
     try:
-        with httpx.Client(headers=HEADERS, timeout=TIMEOUT, follow_redirects=True) as c:
-            resp = c.post(CAIXA_LIST_URL, data=form)
-            if resp.status_code != 200:
-                logger.warning(
-                    f"[{SOURCE}] HTTP {resp.status_code} — fonte indisponível"
-                )
-                return []
-            html = resp.text
-    except httpx.HTTPError as e:
-        logger.warning(f"[{SOURCE}] HTTP error: {e}")
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    except ImportError:
+        logger.warning(
+            f"[{SOURCE}] Playwright não instalado. "
+            "Instale: `pip install playwright && playwright install chromium`. Pulando."
+        )
+        return []
+
+    html = ""
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            ctx = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                ),
+                locale="pt-BR",
+            )
+            page = ctx.new_page()
+            page.set_default_timeout(TIMEOUT_MS)
+            page.goto(CAIXA_SEARCH_URL, wait_until="domcontentloaded")
+
+            page.wait_for_selector("#cmb_estado", state="visible")
+            page.select_option("#cmb_estado", value=STATE)
+
+            # cidade é populada via XHR após mudar estado; aguarda opções carregarem
+            page.wait_for_function(
+                "() => document.querySelector('#cmb_cidade')"
+                " && document.querySelector('#cmb_cidade').options.length > 1",
+                timeout=TIMEOUT_MS,
+            )
+            # Marília pode aparecer com acento ou sem — tenta ambos
+            try:
+                page.select_option("#cmb_cidade", label="MARILIA")
+            except Exception:
+                try:
+                    page.select_option("#cmb_cidade", label="MARÍLIA")
+                except Exception:
+                    # Última tentativa: procura option contendo "MARIL"
+                    page.evaluate(
+                        "() => {"
+                        "  const sel = document.querySelector('#cmb_cidade');"
+                        "  const opt = Array.from(sel.options).find("
+                        "    o => o.text.toUpperCase().includes('MARIL'));"
+                        "  if (opt) { sel.value = opt.value;"
+                        "    sel.dispatchEvent(new Event('change', {bubbles:true})); }"
+                        "}"
+                    )
+
+            # Submete busca — botão Próximo
+            page.click("#btn_next1")
+            # Aguarda lista renderizar
+            page.wait_for_selector(
+                "a[href*='hdnImovel='], div#listaimoveispaginacao",
+                timeout=TIMEOUT_MS,
+            )
+            # Pequeno settle pra paginação
+            page.wait_for_timeout(1500)
+
+            html = page.content()
+            browser.close()
+    except PWTimeout:
+        logger.warning(f"[{SOURCE}] Playwright timeout — fonte lenta/indisponível")
+        return []
+    except Exception:
+        logger.exception(f"[{SOURCE}] Playwright run failed")
         return []
 
     return _parse_listing_html(html)
 
 
 def _parse_listing_html(html: str) -> list[dict[str, Any]]:
-    """Parse best-effort do HTML da Caixa.
-
-    O site renderiza cada imóvel em blocos com link
-    `detalhe-imovel.asp?hdnImovel=<ID>`. Capturamos id e contexto próximo
-    procurando "Marília".
-    """
-    if not html or "Marília" not in html and "Marilia" not in html:
+    """Parse do HTML pós-render. Cada item tem link hdnImovel=<id>."""
+    if not html:
         return []
 
     items: list[dict[str, Any]] = []
-    # Heurística: bloco entre identificadores de imóvel.
-    # Cada item tem um link com hdnimovel=ID
+    seen: set[str] = set()
+
+    # Cada bloco de imóvel: <a href="...hdnImovel=ID..."> ... contexto ... </a>
+    # Captura ID + texto subsequente até próximo hdnImovel ou fim do bloco listagem
     pattern = re.compile(
-        r"hdnimovel=(\d+)[^<]*</a>(.*?)(?=hdnimovel=\d+|</body>)",
+        r"hdnImovel=(\d+)(.*?)(?=hdnImovel=\d+|</body>)",
         re.IGNORECASE | re.DOTALL,
     )
     for m in pattern.finditer(html):
         imovel_id = m.group(1)
+        if imovel_id in seen:
+            continue
+        seen.add(imovel_id)
+
         block = m.group(2)
-        # Só interessa se aparecer Marília no bloco
-        if "marília" not in block.lower() and "marilia" not in block.lower():
+        text = re.sub(r"<[^>]+>", " ", block)
+        text = re.sub(r"\s+", " ", text).strip()[:600]
+
+        # Só aceita item com menção a Marília (defesa caso filtro falhe)
+        if "maril" not in text.lower():
             continue
 
-        text = re.sub(r"<[^>]+>", " ", block)
-        text = re.sub(r"\s+", " ", text).strip()
-
-        # Tentativa de extrair valor (R$ X,XX)
         value = None
         m_val = re.search(r"R\$\s*([\d\.]+,\d{2})", text)
         if m_val:
             try:
-                value = float(
-                    m_val.group(1).replace(".", "").replace(",", ".")
-                )
+                value = float(m_val.group(1).replace(".", "").replace(",", "."))
             except ValueError:
                 value = None
 
-        # Área m²
         area = None
         m_area = re.search(r"(\d+[\.,]?\d*)\s*m²", text)
         if m_area:
@@ -156,19 +195,13 @@ def _parse_listing_html(html: str) -> list[dict[str, Any]]:
             except ValueError:
                 area = None
 
-        # Endereço aproximado: primeiros 200 chars do bloco textual
-        address = text[:200] if text else None
-
         items.append({
             "id": imovel_id,
             "title": f"Leilão Caixa #{imovel_id}",
-            "address": address,
+            "address": text[:200] if text else None,
             "estimated_value": value,
             "area_m2": area,
-            "url": (
-                f"https://venda-imoveis.caixa.gov.br/sistema/"
-                f"detalhe-imovel.asp?hdnImovel={imovel_id}"
-            ),
+            "url": f"{CAIXA_BASE}detalhe-imovel.asp?hdnImovel={imovel_id}",
             "raw_text": text,
         })
 
