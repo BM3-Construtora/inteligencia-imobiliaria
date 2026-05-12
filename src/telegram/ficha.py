@@ -40,7 +40,7 @@ RECOMENDA_MAX_PAYBACK = 4.0
 # Query parsing
 # ----------------------------------------------------------------------
 CEP_RE = re.compile(r"\b(\d{5})-?(\d{3})\b")
-COORD_RE = re.compile(r"^\s*(-?\d{1,3}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)\s*$")
+COORD_RE = re.compile(r"(-?\d{1,3}\.\d+)\s*[,;]\s*(-?\d{1,3}\.\d+)")
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 AREA_HINT_RE = re.compile(r"(\d{2,5})\s*m\s*[²2]?", re.IGNORECASE)
 
@@ -52,7 +52,7 @@ def _classify_query(text: str) -> tuple[str, str]:
         return "address", ""
     if URL_RE.search(t):
         return "url", URL_RE.search(t).group(0)
-    m = COORD_RE.match(t)
+    m = COORD_RE.search(t)
     if m:
         return "coord", f"{m.group(1)},{m.group(2)}"
     m = CEP_RE.search(t)
