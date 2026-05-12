@@ -27,9 +27,10 @@ from typing import Callable
 
 from src.db import get_client
 from src.materials.collectors import leroy, telhanorte
+from src.materials.collectors import cassol as cassol_collector
 from src.materials.collectors.base_vtex import simulate_delivery as vtex_simulate
 from src.materials.matcher import SkuCandidate, match
-from src.materials.models import CommonListing, from_leroy, from_vtex
+from src.materials.models import CommonListing, from_leroy, from_vtex, from_cassol
 from src.materials.normalize import compute as normalize_price
 
 logger = logging.getLogger(__name__)
@@ -46,14 +47,20 @@ def _telhanorte_search(query: str) -> list[CommonListing]:
     return [from_vtex(i, "telhanorte") for i in telhanorte.search_products(query, max_results=50)]
 
 
+def _cassol_search(query: str) -> list[CommonListing]:
+    return [from_cassol(i) for i in cassol_collector.search_products(query, max_results=50)]
+
+
 SEARCHERS: dict[str, Callable[[str], list[CommonListing]]] = {
     "leroy_merlin": _leroy_search,
     "telhanorte": _telhanorte_search,
+    "cassol_centerlar": _cassol_search,
 }
 
 # Sleep entre queries (sec). Suppliers com antibot agressivo precisam pausar.
 QUERY_SLEEP: dict[str, tuple[float, float]] = {
     "leroy_merlin": (3.0, 6.0),
+    "cassol_centerlar": (5.0, 10.0),
 }
 
 # Lojas VTEX cujo frete CEP 17500 dá pra simular via /orderForms/simulation.

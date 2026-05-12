@@ -32,3 +32,10 @@ jobs:
       - name: SKU discovery (LLM)
         continue-on-error: true
         run: python -m src.materials.discovery
+      - name: Price drop alerts
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MATERIALS_ALERT_THRESHOLD: ${{ vars.MATERIALS_ALERT_THRESHOLD || '10' }}
+        run: python -m src.materials.alerts

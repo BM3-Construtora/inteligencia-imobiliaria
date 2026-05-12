@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.materials.collectors.base_vtex import VtexItem
+from src.materials.collectors.cassol import CassolItem
 from src.materials.collectors.leroy import LeroyItem
 
 
@@ -37,6 +38,23 @@ def from_leroy(item: LeroyItem) -> CommonListing:
         price=item.price,
         list_price=item.list_price,
         region_price=item.region_price,
+        is_available=item.is_available,
+        url=item.url,
+        weight_kg=item.weight_kg,
+        raw=item.raw,
+    )
+
+
+def from_cassol(item: CassolItem) -> CommonListing:
+    return CommonListing(
+        supplier_slug="cassol_centerlar",
+        supplier_sku=item.supplier_sku,
+        supplier_name=item.supplier_name,
+        brand=item.brand,
+        ean=item.ean,
+        price=item.price,
+        list_price=item.list_price,
+        region_price=None,
         is_available=item.is_available,
         url=item.url,
         weight_kg=item.weight_kg,
