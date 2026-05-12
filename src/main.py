@@ -65,6 +65,7 @@ Comandos:
   canon-bairros          Canonicaliza nomes de bairros existentes (one-shot LLM)
   projects <sub>         CLI de company_projects (add|list|update|set-outcome)
   off-market [src ...]   Coleta sinais off-market (leilao_caixa|iptu|alvara|inventario)
+  itbi                   Coleta transações de ITBI (preço real de venda) Marília-SP
   distress               Scora sinais off-market + envia top 5 Telegram
   regulatory             Avalia signals regulatorios (zoneamento/APP/vendedor)
   vision [N]             Computer Vision satelite (default 50 listings)
@@ -417,6 +418,14 @@ def main() -> None:
         logger.info("=== Starting SINAPI collector ===")
         s = run_sinapi_collector()
         logger.info(f"=== SINAPI done: {s['metrics']} metrics ===")
+    elif command == "labor":
+        from src.collectors.labor_sidra import run_collector as run_labor_collector
+        logger.info("=== Starting LABOR SIDRA collector ===")
+        s = run_labor_collector()
+        logger.info(
+            f"=== LABOR done: processed={s['processed']} "
+            f"created={s['created']} failed={s['failed']} ==="
+        )
     elif command == "ibge":
         from src.ibge import run_ibge_update
         logger.info("=== Starting IBGE update ===")
@@ -465,6 +474,11 @@ def main() -> None:
                 logger.info(f"=== {n} done: {s} ===")
             except Exception:
                 logger.exception(f"=== {n} FAILED ===")
+    elif command == "itbi":
+        from src.collectors import itbi_marilia
+        logger.info("=== Starting ITBI Marília collector ===")
+        s = itbi_marilia.run_collector()
+        logger.info(f"=== itbi done: {s} ===")
     elif command == "distress":
         from src.distress import run_distress_scorer, send_daily_top_telegram
         logger.info("=== Starting distress scorer ===")
