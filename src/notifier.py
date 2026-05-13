@@ -127,10 +127,11 @@ def run_notifier() -> dict[str, int]:
                 kb = _build_inline_kb(opp.get("id"), listing.get("id"), listing.get("url"))
                 if image_url:
                     caption = _format_caption(opp, listing, is_viable, price_drop=price_drop)
-                    _send_photo(image_url, caption, reply_markup=kb)
+                    msg_id = _send_photo(image_url, caption, reply_markup=kb)
                 else:
                     message = _format_message(opp, listing, is_viable, price_drop=price_drop)
-                    _send_message(message, reply_markup=kb)
+                    msg_id = _send_message(message, reply_markup=kb)
+                _store_opp_message(db, opp["id"], msg_id)
 
                 # Persist last_notified_price em score_breakdown pra detectar drops futuros
                 bd = opp.get("score_breakdown") or {}
@@ -428,8 +429,8 @@ def _build_inline_kb(opp_id: Optional[int], listing_id: Optional[int],
     return {"inline_keyboard": buttons}
 
 
-def _send_message(text: str, reply_markup: Optional[dict] = None) -> None:
-    """Send a text message via Telegram."""
+def _send_message(text: str, reply_markup: Optional[dict] = None) -> Optional[int]:
+    """Send a text message via Telegram. Returns message_id or None on failure."""
     url = f"{TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)}/sendMessage"
     body: dict[str, Any] = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -441,11 +442,12 @@ def _send_message(text: str, reply_markup: Optional[dict] = None) -> None:
         body["reply_markup"] = reply_markup
     resp = httpx.post(url, json=body, timeout=15)
     resp.raise_for_status()
+    return resp.json().get("result", {}).get("message_id")
 
 
 def _send_photo(photo_url: str, caption: str,
-                reply_markup: Optional[dict] = None) -> None:
-    """Send a photo with caption via Telegram."""
+                reply_markup: Optional[dict] = None) -> Optional[int]:
+    """Send a photo with caption via Telegram. Returns message_id or None on failure."""
     url = f"{TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)}/sendPhoto"
     if len(caption) > 1024:
         caption = caption[:1020] + "..."
@@ -461,7 +463,22 @@ def _send_photo(photo_url: str, caption: str,
 
     if resp.status_code != 200:
         logger.warning(f"[notifier] Photo send failed ({resp.status_code}), falling back to text")
-        _send_message(caption, reply_markup=reply_markup)
+        return _send_message(caption, reply_markup=reply_markup)
+    return resp.json().get("result", {}).get("message_id")
+
+
+def _store_opp_message(db: Any, opp_id: int, message_id: Optional[int]) -> None:
+    """Persiste (opp_id, chat_id, message_id) para sincronizar botões futuramente."""
+    if not message_id:
+        return
+    try:
+        db.table("opp_messages").insert({
+            "opp_id": opp_id,
+            "chat_id": str(TELEGRAM_CHAT_ID),
+            "message_id": message_id,
+        }).execute()
+    except Exception as exc:
+        logger.debug(f"[notifier] opp_messages insert falhou: {exc}")
 
 
 def _finish_run(
