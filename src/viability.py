@@ -134,6 +134,102 @@ def _get_sinapi_cost() -> float:
         return 1920.0
 
 
+def get_market_context(neighborhood: str, db: Any = None) -> dict[str, Any]:
+    """Retorna contexto de mercado para um bairro usando os dados coletados.
+
+    Retorna:
+      itbi_heat          — variação ITBI últimos 3m vs mesmo período ano anterior (-1 a +1)
+      obras_investment   — obras públicas concluídas no bairro (últimos 3 anos)
+      licitacoes_pipeline— licitações de obras abertas na cidade (último ano)
+      prazo_venda_ajuste — meses a somar ao prazo_venda_meses base
+      preco_premium_pct  — % adicional no preço de venda por investimento público
+    """
+    if db is None:
+        db = get_client()
+
+    ctx: dict[str, Any] = {
+        "itbi_heat": 0.0,
+        "obras_investment": 0,
+        "licitacoes_pipeline": 0,
+        "prazo_venda_ajuste": 0,
+        "preco_premium_pct": 0.0,
+    }
+
+    # ITBI heat: variação últimos 3 meses vs mesmo trimestre do ano anterior
+    try:
+        from datetime import datetime as _dt
+        now = _dt.now()
+        cur_year, cur_month = now.year, now.month
+
+        def _itbi_count(year: int, month_end: int, months: int = 3) -> int:
+            total = 0
+            for delta in range(months):
+                m = month_end - delta
+                y = year
+                if m < 1:
+                    m += 12
+                    y -= 1
+                r = (
+                    db.table("receitas_marilia")
+                    .select("id", count="exact")
+                    .ilike("descricao_receita", "%ITBI%")
+                    .eq("exercicio", y)
+                    .eq("mes", m)
+                    .execute()
+                )
+                total += r.count or 0
+            return total
+
+        itbi_cur = _itbi_count(cur_year, cur_month)
+        itbi_prev = _itbi_count(cur_year - 1, cur_month)
+
+        if itbi_prev > 0:
+            ctx["itbi_heat"] = round(min(1.0, max(-1.0, (itbi_cur / itbi_prev) - 1.0)), 2)
+        elif itbi_cur > 0:
+            ctx["itbi_heat"] = 0.3
+
+        if ctx["itbi_heat"] >= 0.2:
+            ctx["prazo_venda_ajuste"] = -2
+        elif ctx["itbi_heat"] <= -0.2:
+            ctx["prazo_venda_ajuste"] = 2
+    except Exception:
+        logger.warning("[viability] ITBI heat failed", exc_info=True)
+
+    # Obras concluídas no bairro (últimos 3 anos) → premium de preço
+    try:
+        from datetime import datetime as _dt
+        cutoff_year = _dt.now().year - 3
+        r = (
+            db.table("obras_publicas_marilia")
+            .select("id", count="exact")
+            .eq("situacao", "Concluído")
+            .gte("year", cutoff_year)
+            .ilike("neighborhood", f"%{neighborhood}%")
+            .execute()
+        )
+        ctx["obras_investment"] = r.count or 0
+        # +0.5% por obra concluída, cap 7%
+        ctx["preco_premium_pct"] = round(min(7.0, (r.count or 0) * 0.5), 1)
+    except Exception:
+        logger.warning("[viability] obras investment failed", exc_info=True)
+
+    # Licitações abertas na cidade (pipeline de obras públicas)
+    try:
+        from datetime import datetime as _dt
+        r = (
+            db.table("licitacoes_obras_marilia")
+            .select("id", count="exact")
+            .eq("situacao", "Aberto")
+            .gte("year", _dt.now().year - 1)
+            .execute()
+        )
+        ctx["licitacoes_pipeline"] = r.count or 0
+    except Exception:
+        logger.warning("[viability] licitacoes pipeline failed", exc_info=True)
+
+    return ctx
+
+
 def calc_cost_breakdown(
     land_cost: float,
     area_total: float,
@@ -220,6 +316,7 @@ def simulate_project(
     sinapi_cost: float | None = None,
     neighborhood_avg_price_m2: float | None = None,
     prazo_venda_meses: int = TYPICAL_SALES_MONTHS,
+    market_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Simulate a construction project and return full financial analysis.
 
@@ -269,6 +366,17 @@ def simulate_project(
     if faixa_key == "casa_padrao" and neighborhood_avg_price_m2 and neighborhood_avg_price_m2 > 0:
         preco_mercado = neighborhood_avg_price_m2 * unidade_area
         preco_venda_unidade = min(preco_venda_unidade, preco_mercado * 1.05)
+
+    # Aplica ajustes do contexto de mercado
+    ctx = market_context or {}
+    if ctx:
+        prazo_venda_meses = max(1, prazo_venda_meses + ctx.get("prazo_venda_ajuste", 0))
+        premium = ctx.get("preco_premium_pct", 0.0)
+        if premium > 0:
+            preco_venda_unidade = preco_venda_unidade * (1 + premium / 100.0)
+            # MCMV tem teto legal — não pode ultrapassar valor_max_imovel
+            if faixa_key.startswith("mcmv"):
+                preco_venda_unidade = min(preco_venda_unidade, preco_teto)
 
     vgv = unidades * preco_venda_unidade
 
@@ -343,6 +451,7 @@ def simulate_project(
         "is_viable": is_viable,
         "go_reasons": go_reasons,
         "nogo_reasons": nogo_reasons,
+        "market_context": ctx if ctx else None,
         "inputs": {
             "custo_terreno": round(custo_terreno),
             "area_terreno_m2": round(land_area, 1),
@@ -471,6 +580,14 @@ def run_viability(
             except Exception:
                 pass
 
+        # Market context (ITBI heat + obras investment) — cached per neighborhood
+        market_ctx_cache: dict[str, dict] = {}
+        for n in neighs:
+            try:
+                market_ctx_cache[n] = get_market_context(n, db)
+            except Exception:
+                market_ctx_cache[n] = {}
+
         # Clear previous studies
         ids_to_clear = [l["id"] for l in listings]
         if ids_to_clear:
@@ -485,13 +602,16 @@ def run_viability(
             best_margin = -999
 
             try:
+                neigh = listing.get("neighborhood", "")
+                mctx = market_ctx_cache.get(neigh, {})
                 for faixa_key in MCMV_FAIXAS:
                     study = simulate_project(
                         land_price=float(listing.get("sale_price") or 0),
                         land_area=float(listing.get("total_area") or 0),
                         faixa_key=faixa_key,
                         sinapi_cost=sinapi_cost,
-                        neighborhood_avg_price_m2=neigh_prices.get(listing.get("neighborhood", "")),
+                        neighborhood_avg_price_m2=neigh_prices.get(neigh),
+                        market_context=mctx,
                     )
                     if not study:
                         continue
@@ -501,13 +621,15 @@ def run_viability(
                         float(listing.get("sale_price") or 0),
                         float(listing.get("total_area") or 0),
                         faixa_key, sinapi_cost * 0.90,
-                        neigh_prices.get(listing.get("neighborhood", "")),
+                        neigh_prices.get(neigh),
+                        market_context=mctx,
                     )
                     study_pes = simulate_project(
                         float(listing.get("sale_price") or 0),
                         float(listing.get("total_area") or 0),
                         faixa_key, sinapi_cost * 1.10,
-                        neigh_prices.get(listing.get("neighborhood", "")),
+                        neigh_prices.get(neigh),
+                        market_context=mctx,
                     )
 
                     if study_opt:

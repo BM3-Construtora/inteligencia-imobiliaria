@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 # --- Constants ------------------------------------------------------------
 
-MODEL_VERSION = "lgbm_q_v1_2026-05-11"
-MODEL_VERSION_FALLBACK = "rf_fallback_v1_2026-05-11"
+MODEL_VERSION = "lgbm_q_v2_2026-05-13"
+MODEL_VERSION_FALLBACK = "rf_fallback_v2_2026-05-13"
 
 # Marília-SP centroid (approx)
 MARILIA_LAT = -22.21
@@ -48,6 +48,8 @@ FEATURE_NAMES = [
     "distance_to_center_km",
     "market_heat_score",
     "days_listed",
+    "obras_bairro_count",
+    "parcelamentos_bairro_count",
     "neigh_target_enc",
 ]
 
@@ -62,6 +64,8 @@ FEATURE_LABELS_PT = {
     "distance_to_center_km": "distância ao centro",
     "market_heat_score": "demanda do bairro",
     "days_listed": "tempo de anúncio",
+    "obras_bairro_count": "obras públicas concluídas no bairro",
+    "parcelamentos_bairro_count": "novos loteamentos aprovados no bairro",
     "neigh_target_enc": "preço típico do bairro",
 }
 
@@ -178,6 +182,53 @@ def _fetch_market_heat(db: Any) -> dict[str, float]:
         return {}
 
 
+def _fetch_obras_map(db: Any, years: int = 3) -> dict[str, float]:
+    """Completed public works count per neighborhood in the last N years."""
+    from datetime import datetime
+    cutoff_year = datetime.now().year - years
+    try:
+        r = (
+            db.table("obras_publicas_marilia")
+            .select("neighborhood")
+            .eq("situacao", "Concluído")
+            .gte("year", cutoff_year)
+            .not_.is_("neighborhood", "null")
+            .execute()
+        )
+        counts: dict[str, float] = {}
+        for row in r.data or []:
+            n = (row.get("neighborhood") or "").strip()
+            if n:
+                counts[n] = counts.get(n, 0.0) + 1.0
+        return counts
+    except Exception:
+        logger.warning("[price_model] obras map unavailable")
+        return {}
+
+
+def _fetch_parcelamentos_map(db: Any, years: int = 3) -> dict[str, float]:
+    """Approved parcelamentos count per neighborhood in the last N years."""
+    from datetime import date
+    cutoff = str(date(date.today().year - years, 1, 1))
+    try:
+        r = (
+            db.table("parcelamento_solo_marilia")
+            .select("neighborhood")
+            .gte("issue_date", cutoff)
+            .not_.is_("neighborhood", "null")
+            .execute()
+        )
+        counts: dict[str, float] = {}
+        for row in r.data or []:
+            n = (row.get("neighborhood") or "").strip()
+            if n:
+                counts[n] = counts.get(n, 0.0) + 1.0
+        return counts
+    except Exception:
+        logger.warning("[price_model] parcelamentos map unavailable")
+        return {}
+
+
 # --- Feature engineering --------------------------------------------------
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -226,6 +277,8 @@ def _extract_rows(
     listings: list[dict],
     neigh_avg: dict[str, float],
     heat_map: dict[str, float],
+    obras_map: dict[str, float] | None = None,
+    parcelamentos_map: dict[str, float] | None = None,
 ) -> tuple[list[list[float]], list[float], list[int], list[str]]:
     """Return (X_raw_without_target_enc, y, listing_ids, neighborhoods).
 
@@ -236,6 +289,9 @@ def _extract_rows(
     y: list[float] = []
     ids: list[int] = []
     neighs: list[str] = []
+
+    obras_map = obras_map or {}
+    parcelamentos_map = parcelamentos_map or {}
 
     for l in listings:
         area = float(l.get("total_area") or 0)
@@ -264,6 +320,8 @@ def _extract_rows(
 
         heat = heat_map.get(n, 0.0)
         days = _days_listed(l)
+        obras_c = obras_map.get(n, 0.0)
+        parcel_c = parcelamentos_map.get(n, 0.0)
 
         # Order MUST match FEATURE_NAMES (target-enc added later as last col)
         X.append([
@@ -276,6 +334,8 @@ def _extract_rows(
             dist_km,
             heat,
             days,
+            obras_c,
+            parcel_c,
         ])
         y.append(price)
         ids.append(int(l["id"]))
@@ -297,7 +357,9 @@ def _run_lgbm(
     from sklearn.model_selection import train_test_split
 
     neigh_avg = _build_neigh_avg_price_m2(listings)
-    X_base, y, ids, neighs = _extract_rows(listings, neigh_avg, heat_map)
+    obras_map = _fetch_obras_map(db)
+    parcelamentos_map = _fetch_parcelamentos_map(db)
+    X_base, y, ids, neighs = _extract_rows(listings, neigh_avg, heat_map, obras_map, parcelamentos_map)
     n = len(X_base)
     stats["trained_on"] = n
     if n < 20:
@@ -498,7 +560,9 @@ def _run_rf_fallback(
         return stats
 
     neigh_avg = _build_neigh_avg_price_m2(listings)
-    X_base, y, ids, neighs = _extract_rows(listings, neigh_avg, heat_map)
+    obras_map = _fetch_obras_map(db)
+    parcelamentos_map = _fetch_parcelamentos_map(db)
+    X_base, y, ids, neighs = _extract_rows(listings, neigh_avg, heat_map, obras_map, parcelamentos_map)
     n = len(X_base)
     stats["trained_on"] = n
     if n < 20:
