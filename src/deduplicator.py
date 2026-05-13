@@ -207,6 +207,21 @@ def run_deduplicator() -> dict[str, int]:
                 buckets.setdefault((pb, ab, bed), []).append(l)
 
             seen_pairs: set[tuple[int, int]] = set()
+
+            # Pre-compute per-bucket loteamento guard: count same-source, no-number
+            # land listings per bucket. If > 3 exist, same-source pairs in that
+            # bucket are almost certainly distinct lots (loteamento), not relistings.
+            loteamento_sources: dict[tuple, set[str]] = {}
+            for (pb, ab, bed), bucket_items in buckets.items():
+                src_counts: dict[str, int] = {}
+                for x in bucket_items:
+                    if (
+                        x.get("property_type") == "land"
+                        and not _extract_street_number(x.get("address") or x.get("street") or "")
+                    ):
+                        src_counts[x["source"]] = src_counts.get(x["source"], 0) + 1
+                loteamento_sources[(pb, ab, bed)] = {s for s, cnt in src_counts.items() if cnt > 3}
+
             for (pb, ab, bed), bucket_items in buckets.items():
                 # WHY: ±1 neighbors handle items sitting at bucket boundaries.
                 neighbors: list[dict] = []
@@ -235,6 +250,19 @@ def run_deduplicator() -> dict[str, int]:
                         if same_source and (a.get("source_id") or "") == (b.get("source_id") or ""):
                             continue
                         if a["property_type"] != b["property_type"]:
+                            continue
+
+                        # Loteamento guard: same-source land pairs with no street
+                        # numbers in a bucket that has 4+ same-source entries are
+                        # almost certainly distinct lots, not relistings.
+                        if (
+                            same_source
+                            and a.get("property_type") == "land"
+                            and not _extract_street_number(a.get("address") or a.get("street") or "")
+                            and not _extract_street_number(b.get("address") or b.get("street") or "")
+                            and a["source"] in loteamento_sources.get((pb, ab, bed), set())
+                        ):
+                            stats["comparisons_skipped_by_blocking"] = stats.get("comparisons_skipped_by_blocking", 0) + 1
                             continue
 
                         price_a = float(a.get("sale_price") or 0)
@@ -342,6 +370,13 @@ def _compare(a: dict[str, Any], b: dict[str, Any]) -> Optional[dict[str, Any]]:
         shared_id_portals = {"vivareal", "zapimoveis"}
         if src_a in shared_id_portals and src_b in shared_id_portals:
             return None
+
+    # Different street numbers = definitely different properties.
+    # Extract numbers from address fields for a lightweight check.
+    num_a = _extract_street_number(a.get("address") or a.get("street") or "")
+    num_b = _extract_street_number(b.get("address") or b.get("street") or "")
+    if num_a and num_b and num_a != num_b:
+        return None
 
     geo_distance_m: Optional[float] = None
     geo_match = False
@@ -672,6 +707,16 @@ def _promote_pair(
         return True
     except Exception:
         return False
+
+
+def _extract_street_number(address: str) -> str | None:
+    """Return the first numeric token from an address string that looks like a
+    street number (1–6 digits, optionally followed by a letter suffix).
+    Returns None when the address has no parseable number.
+    """
+    import re
+    m = re.search(r"\b(\d{1,6}[a-zA-Z]?)\b", address)
+    return m.group(1).lower() if m else None
 
 
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
