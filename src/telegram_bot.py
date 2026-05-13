@@ -12,6 +12,7 @@ load_dotenv()
 from telegram import Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -184,6 +185,10 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("deal_update", cmd_deal_update))
     app.add_handler(CommandHandler("deal_outcome", cmd_deal_outcome))
     app.add_handler(CommandHandler("calibration", cmd_calibration))
+
+    # Callback queries (botões inline em cards de oportunidade)
+    from src.telegram.handlers_callback import handle_callback
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
     # Free-text messages → AI
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
