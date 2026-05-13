@@ -110,7 +110,17 @@ def run_distress_scorer() -> dict[str, int]:
 
 
 def send_daily_top_telegram(n: int = 5) -> dict[str, int]:
-    """Envia top-N sinais distress via Telegram."""
+    """[DESATIVADO 2026-05-13 por decisão do user]
+
+    Off-market signals (leilões, etc) NÃO devem mais virar alertas Telegram.
+    Apenas oportunidades de TERRENO (via src/notifier.py) geram alertas.
+
+    Esta função permanece como no-op para compat com main.py + GitHub Actions.
+    Para reativar: remover o early-return abaixo.
+    """
+    logger.info(f"[{AGENT_NAME}] Telegram alerts desativados (decisão produto)")
+    return {"sent": 0, "failed": 0, "disabled": True}
+    # --- código original abaixo (mantido para histórico) ---
     stats = {"sent": 0, "failed": 0}
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error(f"[{AGENT_NAME}] TELEGRAM_BOT_TOKEN/CHAT_ID não setados")

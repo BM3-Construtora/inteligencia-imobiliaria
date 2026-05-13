@@ -100,10 +100,11 @@ def run_notifier() -> dict[str, int]:
                 message = _format_message(opp, listing, is_viable)
                 image_url = listing.get("main_image_url")
 
+                # Sempre envia mensagem completa (texto) — garante link/markdown intactos
+                # Foto vai separada com caption mínima (sem truncar)
+                _send_message(message)
                 if image_url:
-                    _send_photo(image_url, message)
-                else:
-                    _send_message(message)
+                    _send_photo(image_url, "")
 
                 # Mark as notified
                 db.table("opportunities").update({
@@ -205,12 +206,14 @@ def _format_message(opp: dict[str, Any], listing: dict[str, Any],
     if parts:
         lines.append(f"Scoring: {' | '.join(parts)}")
 
-    # Google Maps link if we have coordinates
-    if lat and lng:
-        lines.append(f"\n[📍 Ver no mapa](https://maps.google.com/?q={lat},{lng})")
-
+    # Links (sempre no fim, antes da assinatura). URL do anúncio é prioritário.
+    lines.append("")
     if url:
-        lines.append(f"[🔗 Ver anúncio]({url})")
+        lines.append(f"🔗 *Ver anúncio:* {url}")
+    else:
+        lines.append("_(anúncio sem URL cadastrada)_")
+    if lat and lng:
+        lines.append(f"📍 *Mapa:* https://maps.google.com/?q={lat},{lng}")
 
     return "\n".join(lines)
 
