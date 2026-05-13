@@ -52,10 +52,34 @@ HEADERS = {
 TIMEOUT = 30
 SLEEP_BETWEEN_YEARS = 1.0
 
-# Extrai bairro da descrição (ex: "na área do Jardim Cavallari")
+# RE_BAIRRO — padrão original: "Jardim X", "Vila Y", etc.
 RE_BAIRRO = re.compile(
     r"(?:bairro|jardim|jd\.?|parque|vila|conjunto|núcleo|residencial|loteamento)\s+"
     r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s]{2,50}?)(?=[,\.;]|$|\s{2})",
+    re.IGNORECASE,
+)
+
+# RE_DASH — "ETE - Pombo", "UBS J.K.", "USF - Palmital", "EMEI X - Clara Luz"
+# Captura o segmento final após " - " ou " – " (até 4 palavras)
+RE_DASH = re.compile(
+    r"[-–]\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç\.\s]{1,35}?)(?:\s*/|\s*$)",
+)
+
+# RE_FACILITY — "UBS São Miguel", "USF Santa Paula", "Reforma UBS Santa Antonieta"
+# Captura nome após tipo de equipamento público (≤3 palavras, sem "da"/"de"/"do" iniciais)
+RE_FACILITY = re.compile(
+    r"(?:reforma\s+)?(?:UBS|USF|UPA|EMEI|EMEF|EMEB|CEI|CRAS|CREAS|CAPS|CEO)\s+"
+    r"(?:Prof[aª.]?\s+)?(?:Profess?or[a]?\s+)?"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç]{2,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-záéíóúâêôãõç]{2,}){0,2})"
+    r"(?:\s*[-/,]|\s*$)",
+    re.IGNORECASE,
+)
+
+# Ruído que não é bairro — rejeitar matches contendo estes termos
+_NOISE = re.compile(
+    r"\b(?:secretaria|município|municipio|marília|marilia|"
+    r"destina[a-z]*|conforme|para\s+a?|fornecimento|material|mão|obra|"
+    r"projeto|execu[cç]|reforma|amplia|constru|ilumina|saúde|educa)\b",
     re.IGNORECASE,
 )
 
@@ -164,11 +188,51 @@ def _parse_obra(obra: dict[str, Any], year: int) -> dict[str, Any]:
 
 
 def _extract_neighborhood(obra: dict[str, Any]) -> str | None:
-    # Tenta extrair bairro do título primeiro, depois da descrição
-    for text in [obra.get("titulo") or "", obra.get("descricao") or ""]:
+    titulo = (obra.get("titulo") or "").strip()
+    descricao = (obra.get("descricao") or "").strip()
+
+    def _valid(s: str, max_words: int = 4) -> bool:
+        return bool(s) and len(s) >= 2 and not _NOISE.search(s) and 1 <= len(s.split()) <= max_words
+
+    # 1. Padrão explícito: "Jardim X", "Vila Y", "bairro Z" — maior confiança
+    for text in [titulo, descricao]:
         m = RE_BAIRRO.search(text)
         if m:
-            return m.group(1).strip().title()
+            c = m.group(1).strip().title()
+            if _valid(c):
+                return c
+
+    # 2. Equipamento público antes do traço: "UBS São Miguel", "EMEF Montana- X"
+    #    Roda antes de RE_DASH para evitar capturar nomes de pessoa após o traço
+    m = RE_FACILITY.search(titulo)
+    if m:
+        c = m.group(1).strip().title()
+        if _valid(c, max_words=3):
+            return c
+
+    # 3. Separador de traço: "ETE - Pombo", "USF - Palmital", "Praça X - Avencas"
+    m = RE_DASH.search(titulo)
+    if m:
+        raw = m.group(1).strip()
+        # Strip prefixo de equipamento se o traço capturou "UBS J.K." → "J.K."
+        _fac_prefix = re.compile(
+            r"^(?:UBS|USF|UPA|EMEI|EMEF|EMEB|ETE|CEI|CRAS|CREAS|CAPS|CEO)\s+",
+            re.IGNORECASE,
+        )
+        raw = _fac_prefix.sub("", raw)
+        c = raw.strip().title()
+        if _valid(c):
+            return c
+
+    # 4. Fallback: padrões 2 e 3 na descrição
+    for text in [descricao]:
+        for pattern in [RE_FACILITY, RE_DASH]:
+            m = pattern.search(text)
+            if m:
+                c = m.group(1).strip().title()
+                if _valid(c, max_words=3):
+                    return c
+
     return None
 
 
