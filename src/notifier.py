@@ -97,14 +97,15 @@ def run_notifier() -> dict[str, int]:
                 continue
 
             try:
-                message = _format_message(opp, listing, is_viable)
                 image_url = listing.get("main_image_url")
-
-                # Sempre envia mensagem completa (texto) — garante link/markdown intactos
-                # Foto vai separada com caption mínima (sem truncar)
-                _send_message(message)
                 if image_url:
-                    _send_photo(image_url, "")
+                    # Caption compacta cabe nos 1024 chars do sendPhoto
+                    # + texto completo separado pra detalhes
+                    caption = _format_caption(opp, listing, is_viable)
+                    _send_photo(image_url, caption)
+                else:
+                    message = _format_message(opp, listing, is_viable)
+                    _send_message(message)
 
                 # Mark as notified
                 db.table("opportunities").update({
@@ -216,6 +217,63 @@ def _format_message(opp: dict[str, Any], listing: dict[str, Any],
         lines.append(f"📍 *Mapa:* https://maps.google.com/?q={lat},{lng}")
 
     return "\n".join(lines)
+
+
+def _format_caption(opp: dict[str, Any], listing: dict[str, Any],
+                    is_viable: bool = False) -> str:
+    """Versão compacta para sendPhoto caption (limite Telegram = 1024 chars).
+
+    Mantém info essencial + link do anúncio. Detalhes de scoring saem.
+    """
+    score = opp["score"]
+    price = float(listing.get("sale_price") or 0)
+    area = float(listing.get("total_area") or 0)
+    pm2 = float(listing.get("price_per_m2") or 0)
+    neigh = listing.get("neighborhood") or "?"
+    source = listing.get("source", "?")
+    is_mcmv = listing.get("is_mcmv", False)
+    url = listing.get("url") or ""
+    lat = listing.get("latitude")
+    lng = listing.get("longitude")
+
+    if score >= 80 and is_viable:
+        header = "🔴 OPORTUNIDADE QUENTE — VIÁVEL"
+    elif score >= 80:
+        header = "🔴 OPORTUNIDADE QUENTE"
+    elif score >= 70 and is_viable:
+        header = "🟡 BOA OPORTUNIDADE — VIÁVEL"
+    elif score >= 70:
+        header = "🟡 BOA OPORTUNIDADE"
+    else:
+        header = "⚪ MONITORAR"
+
+    lines = [
+        f"*{header}* — Score *{score:.0f}/100*",
+        f"📍 *{neigh}*",
+        f"💰 R$ {price:,.0f}"
+        + (f" | 📐 {area:,.0f}m²" if area > 0 else "")
+        + (f" | R$ {pm2:,.0f}/m²" if pm2 > 0 else ""),
+    ]
+    if is_mcmv:
+        lines.append("✅ MCMV compatível")
+    lines.append(f"Fonte: {source}")
+
+    # Link sempre no fim — prioritário
+    if url:
+        lines.append(f"🔗 {url}")
+    else:
+        lines.append("_(sem URL cadastrada)_")
+    if lat and lng:
+        lines.append(f"📍 https://maps.google.com/?q={lat},{lng}")
+
+    text = "\n".join(lines)
+    # Hard cap em 1000 chars deixando margem segura
+    if len(text) > 1000:
+        # Preserva o link no fim: corta do meio
+        url_line = f"\n🔗 {url}" if url else ""
+        head = text[:1000 - len(url_line) - 4].rsplit("\n", 1)[0]
+        text = f"{head}\n...{url_line}"
+    return text
 
 
 def _send_message(text: str) -> None:
