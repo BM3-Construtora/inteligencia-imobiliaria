@@ -90,6 +90,29 @@ async def _handle_deal_ignore(query, data: str) -> None:
             await query.message.reply_text(f"Erro: {exc}")
 
 
+def _md_to_html(text: str) -> str:
+    """Converte Markdown simples → HTML (mais robusto no Telegram).
+
+    *bold* → <b>bold</b>, _italic_ → <i>italic</i>, `code` → <code>code</code>
+    Escapa < > & primeiro pra não quebrar.
+    """
+    import re
+    # Escape HTML chars primeiro
+    text = (text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;"))
+    # Code blocks ``` ``` viram <pre>
+    text = re.sub(r"```(.*?)```", lambda m: f"<pre>{m.group(1)}</pre>",
+                  text, flags=re.DOTALL)
+    # Inline code `x` → <code>x</code>
+    text = re.sub(r"`([^`\n]+?)`", r"<code>\1</code>", text)
+    # Bold *x* → <b>x</b> (não cruza newline)
+    text = re.sub(r"\*([^\*\n]+?)\*", r"<b>\1</b>", text)
+    # Italic _x_ → <i>x</i>
+    text = re.sub(r"(?<![\w/])_([^_\n]+?)_(?![\w/])", r"<i>\1</i>", text)
+    return text
+
+
 async def _handle_ficha(query, data: str) -> None:
     """ficha:<listing_id> → gera ficha completa."""
     parts = data.split(":")
@@ -112,7 +135,6 @@ async def _handle_ficha(query, data: str) -> None:
             await query.message.reply_text(f"Listing #{listing_id} não encontrado.")
             return
         l = r.data[0]
-        # Prioriza URL → coord → fallback
         if l.get("url"):
             text = generate_ficha(l["url"])
         elif l.get("latitude") and l.get("longitude"):
@@ -120,18 +142,27 @@ async def _handle_ficha(query, data: str) -> None:
         else:
             await query.message.reply_text("Sem URL ou coord no listing.")
             return
-        # Envia em chunks; se Markdown quebrar (caracteres não-balanceados na
-        # ficha — ex: parênteses em URL, * dentro de texto), retry plain.
-        for i in range(0, len(text), 4000):
-            chunk = text[i:i + 4000]
+
+        # Tenta HTML (mais robusto que Markdown no Telegram).
+        # Fallback plain limpo (remove markers) se HTML também quebrar.
+        html_text = _md_to_html(text)
+        for i in range(0, len(html_text), 4000):
+            chunk = html_text[i:i + 4000]
             try:
                 await query.message.reply_text(
-                    chunk, parse_mode="Markdown",
+                    chunk, parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
-            except Exception as md_err:
-                logger.warning(f"[callback] Markdown parse failed, plain: {md_err}")
-                await query.message.reply_text(chunk, disable_web_page_preview=True)
+            except Exception as html_err:
+                logger.warning(f"[callback] HTML parse failed, plain: {html_err}")
+                # Plain: remove markers Markdown pra ficar legível
+                import re
+                plain_chunk = chunk
+                plain_chunk = re.sub(r"<[^>]+>", "", plain_chunk)
+                plain_chunk = re.sub(r"\*([^\*\n]+?)\*", r"\1", plain_chunk)
+                plain_chunk = re.sub(r"`([^`\n]+?)`", r"\1", plain_chunk)
+                plain_chunk = re.sub(r"_([^_\n]+?)_", r"\1", plain_chunk)
+                await query.message.reply_text(plain_chunk, disable_web_page_preview=True)
     except Exception as exc:
         logger.exception("[callback] ficha failed")
         await query.message.reply_text(f"Erro: {exc}")
