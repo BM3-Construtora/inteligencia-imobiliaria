@@ -120,12 +120,18 @@ async def _handle_ficha(query, data: str) -> None:
         else:
             await query.message.reply_text("Sem URL ou coord no listing.")
             return
-        # Pode passar de 4096
+        # Envia em chunks; se Markdown quebrar (caracteres não-balanceados na
+        # ficha — ex: parênteses em URL, * dentro de texto), retry plain.
         for i in range(0, len(text), 4000):
-            await query.message.reply_text(
-                text[i:i + 4000], parse_mode="Markdown",
-                disable_web_page_preview=True,
-            )
+            chunk = text[i:i + 4000]
+            try:
+                await query.message.reply_text(
+                    chunk, parse_mode="Markdown",
+                    disable_web_page_preview=True,
+                )
+            except Exception as md_err:
+                logger.warning(f"[callback] Markdown parse failed, plain: {md_err}")
+                await query.message.reply_text(chunk, disable_web_page_preview=True)
     except Exception as exc:
         logger.exception("[callback] ficha failed")
         await query.message.reply_text(f"Erro: {exc}")
