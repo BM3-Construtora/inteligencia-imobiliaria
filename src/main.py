@@ -89,6 +89,11 @@ Comandos:
   rating-construtoras    Calcula rating A/B/C/D de construtoras (dados DOM-MAR)
   cmdu                   Coleta atas do CMDU (decisões urbanísticas 6-12mo ahead)
   plano-diretor          Monitora DOM-MAR para keywords de upzoning/zoneamento
+  cnpj-construtoras      Enriquece construtoras_rating com dados CNPJ/Receita Federal
+  agronegocio            Coleta índice CEPEA ESALQ-USP (correlação safra × imóveis)
+  heritage               Detector de herança: obituários × TJSP × listings
+  embed                  Gera embeddings text-embedding-004 para listings e documentos
+  vision-listings        Analisa fotos de anúncios via Gemini Vision (conservation score)
 """.strip()
 
 
@@ -614,6 +619,33 @@ def main() -> None:
         logger.info("=== Starting Plano Diretor monitor ===")
         s = run_plano_diretor_monitor()
         logger.info(f"=== plano-diretor done: {s} ===")
+    elif command == "cnpj-construtoras":
+        from src.collectors.cnpj_construtoras import run_cnpj_enricher
+        logger.info("=== Starting CNPJ enricher (construtoras) ===")
+        s = run_cnpj_enricher()
+        logger.info(f"=== cnpj-construtoras done: {s} ===")
+    elif command == "agronegocio":
+        from src.collectors.agronegocio import run_agronegocio_collector
+        logger.info("=== Starting Agronegócio CEPEA collector ===")
+        s = run_agronegocio_collector()
+        logger.info(f"=== agronegocio done: {s} ===")
+    elif command == "heritage":
+        from src.collectors.heritage_detector import run_heritage_detector
+        logger.info("=== Starting Heritage detector ===")
+        s = run_heritage_detector()
+        logger.info(f"=== heritage done: {s} ===")
+    elif command == "embed":
+        from src.embedder import run_embedder
+        limit = int(args[1]) if len(args) > 1 else 500
+        logger.info(f"=== Starting embedder (limit={limit}) ===")
+        s = run_embedder(limit=limit)
+        logger.info(f"=== embed done: {s} ===")
+    elif command == "vision-listings":
+        from src.vision_listings import run_vision_listings
+        limit = int(args[1]) if len(args) > 1 else 100
+        logger.info(f"=== Starting listing vision (limit={limit}) ===")
+        s = run_vision_listings(limit=limit)
+        logger.info(f"=== vision-listings done: {s} ===")
     else:
         print(f"Comando desconhecido: {command}")
         print(USAGE)

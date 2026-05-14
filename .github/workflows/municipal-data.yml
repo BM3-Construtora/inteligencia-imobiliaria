@@ -95,6 +95,75 @@ jobs:
           max_attempts: 2
           command: python -m src.main ibge-sectors
 
+  intelligence-enrichment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - name: CEPEA Agronegócio Index
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 2
+          command: python -m src.main agronegocio
+      - name: Heritage Detector
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 2
+          command: python -m src.main heritage
+      - name: CNPJ Construtoras Enrichment
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 2
+          command: python -m src.main cnpj-construtoras
+
+  embedding-generation:
+    needs: [dom-signals]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    if: ${{ env.GEMINI_API_KEY != '' || env.VERTEX_PROJECT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - name: Generate Embeddings
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 25
+          max_attempts: 2
+          command: python -m src.main embed 300
+
+  vision-listings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    if: ${{ env.GEMINI_API_KEY != '' || env.VERTEX_PROJECT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - name: Vision Listing Photos
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 25
+          max_attempts: 2
+          command: python -m src.main vision-listings 50
+
   rating-construtoras:
     needs: [dom-signals]
     runs-on: ubuntu-latest
@@ -115,7 +184,7 @@ jobs:
           command: python -m src.main rating-construtoras
 
   summary:
-    needs: [dom-signals, spatial-layer, ibge-census, rating-construtoras]
+    needs: [dom-signals, spatial-layer, ibge-census, rating-construtoras, intelligence-enrichment, embedding-generation, vision-listings]
     if: always()
     runs-on: ubuntu-latest
     steps:

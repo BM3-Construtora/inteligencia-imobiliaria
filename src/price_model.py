@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 
 # --- Constants ------------------------------------------------------------
 
-MODEL_VERSION = "lgbm_q_v2_2026-05-13"
-MODEL_VERSION_FALLBACK = "rf_fallback_v2_2026-05-13"
+MODEL_VERSION = "lgbm_q_v3_2026-05-14"
+MODEL_VERSION_FALLBACK = "rf_fallback_v3_2026-05-14"
+# v3: ITBI como ground truth (elimina survivorship bias) + feature agronegócio
 
 # Coordenadas legadas — mantidas para compatibilidade
 # Usar get_economic_centroid_distances() para features mais precisas
@@ -59,6 +60,7 @@ FEATURE_NAMES = [
     "days_listed",
     "obras_bairro_count",
     "parcelamentos_bairro_count",
+    "agronegocio_indice",
     "neigh_target_enc",
 ]
 
@@ -80,6 +82,7 @@ FEATURE_LABELS_PT = {
     "days_listed": "tempo de anúncio",
     "obras_bairro_count": "obras públicas concluídas no bairro",
     "parcelamentos_bairro_count": "novos loteamentos aprovados no bairro",
+    "agronegocio_indice": "pressão de compra do agronegócio (safra)",
     "neigh_target_enc": "preço típico do bairro",
 }
 
@@ -113,6 +116,19 @@ def run_price_model() -> dict[str, int]:
             _finish_run(db, run_id, "completed", stats)
             return stats
 
+        # Índice agronegócio (safra) — feature global para o mês atual
+        agro_indice = _fetch_agronegocio_indice(db)
+        for l in listings:
+            l["_agronegocio_indice"] = agro_indice
+        logger.info(f"[price_model] Agronegócio indice={agro_indice:.1f}")
+
+        # ITBI como ground truth adicional (elimina survivorship bias)
+        itbi_raw = _fetch_itbi_as_training(db)
+        itbi_listings = _itbi_to_listing_format(itbi_raw, agro_indice)
+        if itbi_listings:
+            logger.info(f"[price_model] +{len(itbi_listings)} transações ITBI como ground truth")
+            stats["itbi_ground_truth"] = len(itbi_listings)
+
         heat_map = _fetch_market_heat(db)
 
         # Try LightGBM path; on import error or runtime fail, fall back to RF.
@@ -120,7 +136,7 @@ def run_price_model() -> dict[str, int]:
             import lightgbm  # noqa: F401
             import numpy as np  # noqa: F401
             from sklearn.model_selection import train_test_split  # noqa: F401
-            stats.update(_run_lgbm(db, listings, heat_map, stats))
+            stats.update(_run_lgbm(db, listings, heat_map, stats, itbi_listings=itbi_listings))
         except ImportError as e:
             logger.warning(
                 f"[price_model] lightgbm/sklearn missing ({e}); using RF fallback"
@@ -219,6 +235,68 @@ def _fetch_obras_map(db: Any, years: int = 3) -> dict[str, float]:
     except Exception:
         logger.warning("[price_model] obras map unavailable")
         return {}
+
+
+def _fetch_agronegocio_indice(db: Any) -> float:
+    """Retorna índice de pressão de compra do agronegócio para o mês atual (0-100)."""
+    try:
+        from src.collectors.agronegocio import get_current_agronegocio_index
+        return get_current_agronegocio_index(db)
+    except Exception:
+        logger.debug("[price_model] agronegocio indice indisponível, usando 50.0")
+        return 50.0
+
+
+def _fetch_itbi_as_training(db: Any) -> list[dict]:
+    """Busca transações ITBI para usar como ground truth no treino.
+
+    ITBI = preço real de transação (eliminina survivorship bias das listagens).
+    Exige: total_area > 0, valor_declarado > 5000, neighborhood preenchido.
+    """
+    try:
+        from datetime import date
+        cutoff = str(date(date.today().year - 3, 1, 1))
+        r = (
+            db.table("itbi_transactions")
+            .select("neighborhood, area_m2, valor_declarado, latitude, longitude, transaction_date")
+            .eq("property_type", "land")
+            .gte("transaction_date", cutoff)
+            .gt("area_m2", 15)
+            .gt("valor_declarado", 5000)
+            .not_.is_("neighborhood", "null")
+            .limit(2000)
+            .execute()
+        )
+        return r.data or []
+    except Exception:
+        logger.debug("[price_model] ITBI training data indisponível")
+        return []
+
+
+def _itbi_to_listing_format(itbi_rows: list[dict], agro_indice: float) -> list[dict]:
+    """Converte registros ITBI para o formato de listing esperado por _extract_rows."""
+    result = []
+    for t in itbi_rows:
+        area = float(t.get("area_m2") or 0)
+        price = float(t.get("valor_declarado") or 0)
+        if area <= 0 or price <= 0:
+            continue
+        result.append({
+            "id": f"itbi_{t.get('transaction_date', '')}_{area}",
+            "sale_price": price,
+            "total_area": area,
+            "price_per_m2": price / area,
+            "neighborhood": t.get("neighborhood", ""),
+            "latitude": t.get("latitude"),
+            "longitude": t.get("longitude"),
+            "is_mcmv": area <= 300,
+            "features": {},
+            "first_seen_at": t.get("transaction_date"),
+            "mcmv_accessibility_score": 50.0,
+            "_agronegocio_indice": agro_indice,
+            "_is_itbi": True,
+        })
+    return result
 
 
 def _fetch_parcelamentos_map(db: Any, years: int = 3) -> dict[str, float]:
@@ -346,6 +424,7 @@ def _extract_rows(
         days = _days_listed(l)
         obras_c = obras_map.get(n, 0.0)
         parcel_c = parcelamentos_map.get(n, 0.0)
+        agro = float(l.get("_agronegocio_indice") or 50.0)
 
         # Order MUST match FEATURE_NAMES (target-enc added later as last col)
         X.append([
@@ -365,6 +444,7 @@ def _extract_rows(
             days,
             obras_c,
             parcel_c,
+            agro,
         ])
         y.append(price)
         ids.append(int(l["id"]))
@@ -380,6 +460,7 @@ def _run_lgbm(
     listings: list[dict],
     heat_map: dict[str, float],
     stats: dict[str, Any],
+    itbi_listings: list[dict] | None = None,
 ) -> dict[str, Any]:
     import numpy as np
     import lightgbm as lgb
@@ -388,7 +469,23 @@ def _run_lgbm(
     neigh_avg = _build_neigh_avg_price_m2(listings)
     obras_map = _fetch_obras_map(db)
     parcelamentos_map = _fetch_parcelamentos_map(db)
+
+    # Dataset base: listings (peso 1.0)
     X_base, y, ids, neighs = _extract_rows(listings, neigh_avg, heat_map, obras_map, parcelamentos_map)
+    weights = [1.0] * len(y)
+
+    # Adicionar ITBI como ground truth com peso 2.0 (preço real > listagem)
+    if itbi_listings:
+        X_itbi, y_itbi, _, neighs_itbi = _extract_rows(
+            itbi_listings, neigh_avg, heat_map, obras_map, parcelamentos_map
+        )
+        if X_itbi:
+            X_base.extend(X_itbi)
+            y.extend(y_itbi)
+            neighs.extend(neighs_itbi)
+            weights.extend([2.0] * len(y_itbi))
+            logger.info(f"[price_model] Training set: {len(y)-len(y_itbi)} listings + {len(y_itbi)} ITBI")
+
     n = len(X_base)
     stats["trained_on"] = n
     if n < 20:
@@ -396,9 +493,11 @@ def _run_lgbm(
 
     X_arr = np.array(X_base, dtype=float)
     y_arr = np.array(y, dtype=float)
+    w_arr = np.array(weights, dtype=float)
     idx_all = np.arange(n)
 
     idx_tr, idx_te = train_test_split(idx_all, test_size=0.2, random_state=42)
+    w_tr = w_arr[idx_tr]
 
     # --- Target-encoding (fit on TRAIN only — avoid leakage) ---
     tr_neighs = [neighs[i] for i in idx_tr]
@@ -441,7 +540,7 @@ def _run_lgbm(
             random_state=42,
             verbosity=-1,
         )
-        m.fit(X_tr, y_tr)
+        m.fit(X_tr, y_tr, sample_weight=w_tr)
         preds_te = m.predict(X_te)
         mae = float(np.mean(np.abs(preds_te - y_te))) if len(y_te) else 0.0
         logger.info(f"[price_model] q={q:.2f} test MAE=R${mae:,.0f}")
