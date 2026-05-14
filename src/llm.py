@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+VERTEX_PROJECT = os.getenv("VERTEX_PROJECT", "")
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
+USE_VERTEX = bool(VERTEX_PROJECT)
+
 _client = None
 
 
@@ -22,7 +26,16 @@ def _get_client():
     global _client
     if _client is None:
         from google import genai
-        _client = genai.Client(api_key=GEMINI_API_KEY)
+        if USE_VERTEX:
+            _client = genai.Client(
+                vertexai=True,
+                project=VERTEX_PROJECT,
+                location=VERTEX_LOCATION,
+            )
+            logger.info(f"[llm] Usando Vertex AI (project={VERTEX_PROJECT})")
+        else:
+            _client = genai.Client(api_key=GEMINI_API_KEY)
+            logger.debug("[llm] Usando AI Studio (sem DPA — apenas dev local)")
     return _client
 
 
@@ -236,3 +249,8 @@ def generate_vision(
     except Exception:
         logger.warning("[llm] Gemini vision call failed", exc_info=True)
         return None
+
+
+def get_llm_mode() -> str:
+    """Retorna 'vertex_ai' ou 'ai_studio' — para audit log."""
+    return "vertex_ai" if USE_VERTEX else "ai_studio"

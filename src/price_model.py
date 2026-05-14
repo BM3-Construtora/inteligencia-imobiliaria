@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.db import get_client
+from src.spatial import get_economic_centroid_distances
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,8 @@ logger = logging.getLogger(__name__)
 MODEL_VERSION = "lgbm_q_v2_2026-05-13"
 MODEL_VERSION_FALLBACK = "rf_fallback_v2_2026-05-13"
 
-# Marília-SP centroid (approx)
+# Coordenadas legadas — mantidas para compatibilidade
+# Usar get_economic_centroid_distances() para features mais precisas
 MARILIA_LAT = -22.21
 MARILIA_LON = -49.95
 
@@ -45,7 +47,14 @@ FEATURE_NAMES = [
     "is_mcmv",
     "infra_count",
     "prox_count",
-    "distance_to_center_km",
+    # Centros econômicos reais de Marília (substituem distância_centro genérica)
+    "dist_commercial_km",    # Av. Sampaio Vidal + Shopping
+    "dist_health_km",        # Famema + Amaral Carvalho
+    "dist_education_km",     # Unimar + Unesp
+    "dist_industrial_km",    # Distrito industrial
+    "dist_historic_km",      # Centro histórico (decadente — peso menor)
+    # Score de acessibilidade MCMV (critérios reais da Caixa)
+    "mcmv_accessibility_score",
     "market_heat_score",
     "days_listed",
     "obras_bairro_count",
@@ -61,7 +70,12 @@ FEATURE_LABELS_PT = {
     "is_mcmv": "compatibilidade MCMV",
     "infra_count": "infraestrutura",
     "prox_count": "proximidades",
-    "distance_to_center_km": "distância ao centro",
+    "dist_commercial_km":       "distância ao polo comercial (km)",
+    "dist_health_km":           "distância ao polo de saúde (km)",
+    "dist_education_km":        "distância ao polo educacional (km)",
+    "dist_industrial_km":       "distância ao polo industrial (km)",
+    "dist_historic_km":         "distância ao centro histórico (km)",
+    "mcmv_accessibility_score": "score de acessibilidade MCMV",
     "market_heat_score": "demanda do bairro",
     "days_listed": "tempo de anúncio",
     "obras_bairro_count": "obras públicas concluídas no bairro",
@@ -143,7 +157,8 @@ def _fetch_listings(db: Any) -> list[dict]:
             db.table("listings")
             .select(
                 "id, sale_price, total_area, price_per_m2, neighborhood, "
-                "latitude, longitude, is_mcmv, features, first_seen_at"
+                "latitude, longitude, is_mcmv, features, first_seen_at, "
+                "mcmv_accessibility_score"
             )
             .eq("is_active", True)
             .eq("property_type", "land")
@@ -310,13 +325,22 @@ def _extract_rows(
         infra_count = len(feat.get("infraestrutura") or [])
         prox_count = len(feat.get("proximidades") or [])
 
-        if has_coords:
+        # Centros econômicos reais (substitui distância ao centro geográfico)
+        centroids = {}
+        if lat and lon:
             try:
-                dist_km = _haversine_km(float(lat), float(lon), MARILIA_LAT, MARILIA_LON)
-            except (TypeError, ValueError):
-                dist_km = 0.0
-        else:
-            dist_km = 0.0
+                centroids = get_economic_centroid_distances(float(lat), float(lon))
+            except Exception:
+                pass
+
+        dist_commercial_km = centroids.get("commercial", 3.0)
+        dist_health_km = centroids.get("health", 3.0)
+        dist_education_km = centroids.get("education", 3.0)
+        dist_industrial_km = centroids.get("industrial", 5.0)
+        dist_historic_km = centroids.get("historic", 3.0)
+
+        # Score MCMV do banco (calculado pelo spatial enricher)
+        mcmv_score = float(l.get("mcmv_accessibility_score") or 50.0)
 
         heat = heat_map.get(n, 0.0)
         days = _days_listed(l)
@@ -331,7 +355,12 @@ def _extract_rows(
             float(is_mcmv),
             float(infra_count),
             float(prox_count),
-            dist_km,
+            dist_commercial_km,
+            dist_health_km,
+            dist_education_km,
+            dist_industrial_km,
+            dist_historic_km,
+            mcmv_score,
             heat,
             days,
             obras_c,
