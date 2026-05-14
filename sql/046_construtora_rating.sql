@@ -57,11 +57,11 @@ SELECT
   a.requerente AS construtora,
   a.cnpj_cpf AS cnpj,
   COUNT(*) AS alvaras_no_bairro,
-  MAX(a.edition_date) AS ultimo_alvara,
-  SUM(a.area_construida) AS area_total_aprovada_m2
+  MAX(a.publication_date) AS ultimo_alvara,
+  SUM(a.area_construida_m2) AS area_total_aprovada_m2
 FROM alvaras_marilia a
 WHERE a.neighborhood IS NOT NULL
   AND a.requerente IS NOT NULL
-  AND a.edition_date >= CURRENT_DATE - INTERVAL '36 months'
+  AND a.publication_date >= CURRENT_DATE - INTERVAL '36 months'
 GROUP BY a.neighborhood, a.requerente, a.cnpj_cpf
 ORDER BY a.neighborhood, alvaras_no_bairro DESC;

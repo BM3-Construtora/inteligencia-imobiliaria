@@ -81,6 +81,14 @@ Comandos:
   deals <sub>            CLI de bm3_deals (add|update|outcome|list|import-stalled)
   calibration            Roda feedback loop (Hunter/AVM/Viability drift)
   drift-report           Envia weekly drift report via Telegram
+  osm                    Coleta POIs via OpenStreetMap/Overpass API
+  alvara                 Coleta alvarás de aprovação DOM-MAR (Seção III-A, 18-36mo ahead)
+  eiv                    Coleta EIVs (Estudo de Impacto de Vizinhança) DOM-MAR
+  ibge-sectors           Coleta setores censitários IBGE 2022 (GeoJSON + renda)
+  spatial-enrich         Enriquece listings com proximidade a POIs e score MCMV
+  rating-construtoras    Calcula rating A/B/C/D de construtoras (dados DOM-MAR)
+  cmdu                   Coleta atas do CMDU (decisões urbanísticas 6-12mo ahead)
+  plano-diretor          Monitora DOM-MAR para keywords de upzoning/zoneamento
 """.strip()
 
 
@@ -566,6 +574,46 @@ def main() -> None:
         logger.info("=== Starting drift report ===")
         s = run_weekly_drift_report()
         logger.info(f"=== Drift report done: {s} ===")
+    elif command == "osm":
+        from src.collectors.osm_collector import run_osm_collector
+        logger.info("=== Starting OSM POI collector ===")
+        s = run_osm_collector()
+        logger.info(f"=== OSM done: {s} ===")
+    elif command == "alvara":
+        from src.collectors.alvara_marilia import run_alvara_collector
+        logger.info("=== Starting Alvará collector (DOM-MAR Seção III-A) ===")
+        s = run_alvara_collector()
+        logger.info(f"=== alvara done: {s} ===")
+    elif command == "eiv":
+        from src.collectors.eiv_marilia import run_eiv_collector
+        logger.info("=== Starting EIV collector ===")
+        s = run_eiv_collector()
+        logger.info(f"=== eiv done: {s} ===")
+    elif command == "ibge-sectors":
+        from src.collectors.ibge_sectors import run_ibge_sectors_collector
+        logger.info("=== Starting IBGE Sectors collector ===")
+        s = run_ibge_sectors_collector()
+        logger.info(f"=== ibge-sectors done: {s} ===")
+    elif command == "spatial-enrich":
+        from src.spatial import run_proximity_enrichment
+        logger.info("=== Starting spatial proximity enrichment ===")
+        s = run_proximity_enrichment()
+        logger.info(f"=== spatial-enrich done: {s} ===")
+    elif command == "rating-construtoras":
+        from src.rating_construtoras import run_rating_construtoras
+        logger.info("=== Starting construtoras rating ===")
+        s = run_rating_construtoras()
+        logger.info(f"=== rating-construtoras done: {s} ===")
+    elif command == "cmdu":
+        from src.collectors.cmdu_atas import run_cmdu_collector
+        logger.info("=== Starting CMDU atas collector ===")
+        s = run_cmdu_collector()
+        logger.info(f"=== cmdu done: {s} ===")
+    elif command == "plano-diretor":
+        from src.collectors.plano_diretor_monitor import run_plano_diretor_monitor
+        logger.info("=== Starting Plano Diretor monitor ===")
+        s = run_plano_diretor_monitor()
+        logger.info(f"=== plano-diretor done: {s} ===")
     else:
         print(f"Comando desconhecido: {command}")
         print(USAGE)
