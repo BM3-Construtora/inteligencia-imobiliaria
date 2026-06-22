@@ -6,3 +6,6 @@ dist/
 *.egg-info/
 .ruff_cache/
 .pytest_cache/
+.DS_Store
+.claude/worktrees/
+.claude/scheduled_tasks.lock
