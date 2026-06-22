@@ -31,6 +31,7 @@ from typing import Any
 import httpx
 
 from src.db import get_client
+from src.marilia_neighborhoods import validate_neighborhood
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +275,7 @@ def _extract_habite_se(
         area_terrain = _to_float(_first_match(RE_AREA_TERRAIN, snippet))
         cost = _to_float(_first_match(RE_COST, snippet))
         issue_date = _extract_date(snippet) or fallback_date
-        neighborhood = _first_match(RE_NEIGHBORHOOD, snippet)
+        neighborhood = validate_neighborhood(_first_match(RE_NEIGHBORHOOD, snippet))
         address = (RE_ADDRESS.search(snippet) or type("", (), {"group": lambda self, n: None})()).group(0)
         if address:
             address = address.strip()

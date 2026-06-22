@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from src.db import get_client
+from src.marilia_neighborhoods import validate_neighborhood
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +215,7 @@ def _extract_parcelamentos(
         area_total = _to_float(_first_match(RE_AREA, snippet))
         lotes_count = _to_int(_first_match(RE_LOTES, snippet))
         issue_date = _extract_date(snippet) or fallback_date
-        neighborhood = _first_match(RE_NEIGHBORHOOD, snippet)
+        neighborhood = validate_neighborhood(_first_match(RE_NEIGHBORHOOD, snippet))
         address_m = RE_ADDRESS.search(snippet)
         address = address_m.group(0).strip() if address_m else None
 

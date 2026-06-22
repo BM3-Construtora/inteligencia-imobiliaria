@@ -29,6 +29,7 @@ from typing import Any
 import httpx
 
 from src.db import get_client
+from src.marilia_neighborhoods import validate_neighborhood
 
 logger = logging.getLogger(__name__)
 
@@ -194,27 +195,35 @@ def _extract_neighborhood(obra: dict[str, Any]) -> str | None:
     def _valid(s: str, max_words: int = 4) -> bool:
         return bool(s) and len(s) >= 2 and not _NOISE.search(s) and 1 <= len(s.split()) <= max_words
 
+    def _accept(candidate: str) -> str | None:
+        """Valida contra lista canônica; retorna nome canônico ou None."""
+        return validate_neighborhood(candidate)
+
     # 1. Padrão explícito: "Jardim X", "Vila Y", "bairro Z" — maior confiança
     for text in [titulo, descricao]:
         m = RE_BAIRRO.search(text)
         if m:
             c = m.group(1).strip().title()
             if _valid(c):
-                return c
+                # RE_BAIRRO já captura o prefixo no texto; reconstruir com prefixo
+                full = m.group(0).strip().title()
+                result = _accept(full) or _accept(c)
+                if result:
+                    return result
 
-    # 2. Equipamento público antes do traço: "UBS São Miguel", "EMEF Montana- X"
-    #    Roda antes de RE_DASH para evitar capturar nomes de pessoa após o traço
+    # 2. Equipamento público: "UBS São Miguel", "EMEF Montana"
     m = RE_FACILITY.search(titulo)
     if m:
         c = m.group(1).strip().title()
         if _valid(c, max_words=3):
-            return c
+            result = _accept(c)
+            if result:
+                return result
 
     # 3. Separador de traço: "ETE - Pombo", "USF - Palmital", "Praça X - Avencas"
     m = RE_DASH.search(titulo)
     if m:
         raw = m.group(1).strip()
-        # Strip prefixo de equipamento se o traço capturou "UBS J.K." → "J.K."
         _fac_prefix = re.compile(
             r"^(?:UBS|USF|UPA|EMEI|EMEF|EMEB|ETE|CEI|CRAS|CREAS|CAPS|CEO)\s+",
             re.IGNORECASE,
@@ -222,7 +231,9 @@ def _extract_neighborhood(obra: dict[str, Any]) -> str | None:
         raw = _fac_prefix.sub("", raw)
         c = raw.strip().title()
         if _valid(c):
-            return c
+            result = _accept(c)
+            if result:
+                return result
 
     # 4. Fallback: padrões 2 e 3 na descrição
     for text in [descricao]:
@@ -231,7 +242,9 @@ def _extract_neighborhood(obra: dict[str, Any]) -> str | None:
             if m:
                 c = m.group(1).strip().title()
                 if _valid(c, max_words=3):
-                    return c
+                    result = _accept(c)
+                    if result:
+                        return result
 
     return None
 
