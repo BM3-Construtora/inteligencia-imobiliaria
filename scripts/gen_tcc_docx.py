@@ -13,6 +13,7 @@ PLACEHOLDERS A PREENCHER (procure por "[PREENCHER" no .docx gerado):
   - Figura 1 (diagrama do pipeline) — descrição pronta; inserir a imagem
 Depois de preencher no Word: clicar no Sumário > Atualizar campo.
 """
+import os
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
@@ -196,14 +197,19 @@ def tabela(titulo, headers, rows, fonte="Elaborado pelo autor (2026)."):
     _fonte(fonte)
 
 
-def figura(titulo, descricao, fonte="Elaborado pelo autor (2026)."):
+def figura(titulo, descricao, fonte="Elaborado pelo autor (2026).", img=None):
     _fig_n[0] += 1
     _legenda("Figura", _fig_n[0], titulo)
-    box = doc.add_paragraph()
-    box.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = box.add_run(f"[INSERIR FIGURA {_fig_n[0]} — {descricao}]")
-    r.font.size = Pt(10)
-    r.font.italic = True
+    if img and os.path.exists(img):
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run().add_picture(img, width=Cm(13))
+    else:
+        box = doc.add_paragraph()
+        box.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = box.add_run(f"[INSERIR FIGURA {_fig_n[0]} — {descricao}]")
+        r.font.size = Pt(10)
+        r.font.italic = True
     _fonte(fonte)
 
 
@@ -294,14 +300,15 @@ para(
     "análise de viabilidade de terrenos em Marília-SP. Adotando a abordagem de estudo "
     "de caso aplicado à construtora BM3, o sistema coleta dados de múltiplas fontes "
     "públicas, estima o valor de mercado por meio de um modelo de avaliação "
-    "automatizada (AVM) baseado em regressão por quantis (LightGBM), calibrado com "
-    "transações reais de ITBI como verdade-fundamento, explica suas previsões com "
+    "automatizada (AVM) baseado em regressão por quantis (LightGBM), tendo as "
+    "transações de ITBI como verdade-fundamento de projeto, explica suas previsões com "
     "valores SHAP e simula a viabilidade econômico-financeira (VGV, TIR e payback) "
     "sob as faixas do MCMV. Os resultados, avaliados contra um baseline de preço "
-    "médio por metro quadrado e reproduzidos em casos reais da BM3, indicam que a "
-    "solução reduz a incerteza decisória e torna o processo auditável e reproduzível, "
-    "a custo operacional marginal, demonstrando a aplicabilidade da Construção 4.0 "
-    "fora dos grandes centros urbanos.", indent=False)
+    "médio por metro quadrado, indicam que o AVM supera consistentemente o baseline e "
+    "que a plataforma torna o processo de avaliação auditável e reproduzível, a custo "
+    "operacional marginal, demonstrando a aplicabilidade da Construção 4.0 fora dos "
+    "grandes centros urbanos, ainda que a precisão absoluta permaneça limitada pelo "
+    "tamanho da amostra e pela indisponibilidade atual de transações.", indent=False)
 pk = doc.add_paragraph()
 pk.add_run("Palavras-chave: ").bold = True
 pk.add_run("Inteligência Artificial. Avaliação Automatizada de Imóveis. Habitação "
@@ -320,12 +327,12 @@ para(
     "Marília, Brazil. Adopting a case study approach applied to the BM3 construction "
     "company, the system collects data from multiple public sources, estimates market "
     "value through an Automated Valuation Model (AVM) based on quantile regression "
-    "(LightGBM), calibrated with real property transfer tax (ITBI) transactions as "
+    "(LightGBM), designed to use property transfer tax (ITBI) transactions as "
     "ground truth, explains its predictions using SHAP values, and simulates the "
     "economic and financial feasibility (gross sales value, IRR and payback) under "
     "the MCMV income brackets. The results, evaluated against a price-per-square-meter "
-    "baseline and reproduced on real BM3 cases, indicate that the solution reduces "
-    "decision uncertainty and makes the process auditable and reproducible at marginal "
+    "baseline, indicate that the AVM consistently outperforms the baseline and that the "
+    "platform makes the valuation process auditable and reproducible at marginal "
     "operating cost, demonstrating the applicability of Construction 4.0 beyond major "
     "urban centers.", indent=False)
 pk = doc.add_paragraph()
@@ -391,10 +398,11 @@ para("Esse desalinhamento tem raiz informacional. O mercado imobiliário local �
      "ocorrerá ao longo dos meses de execução.")
 para("Dados oficiais confirmam a materialidade do risco. O Índice Nacional de Custo da "
      "Construção (INCC/FGV) acumulou, em períodos recentes, variações superiores à "
-     "inflação geral, pressionando orçamentos previamente fechados. O Sistema Nacional "
+     "inflação geral (FUNDAÇÃO GETULIO VARGAS, 2024), pressionando orçamentos "
+     "previamente fechados. O Sistema Nacional "
      "de Pesquisa de Custos e Índices da Construção Civil (SINAPI), mantido por Caixa "
      "Econômica Federal e IBGE, evidencia diferenças expressivas de preço de insumos e "
-     "serviços entre estados e municípios, o que inviabiliza generalizar estimativas. "
+     "serviços entre estados e municípios (CAIXA ECONÔMICA FEDERAL, 2024), o que inviabiliza generalizar estimativas. "
      "Para um incorporador de uma única cidade do interior, com capital de giro "
      "limitado, essa volatilidade não é abstração macroeconômica — é a diferença entre "
      "um empreendimento que fecha no azul e outro que trava capital.")
@@ -428,9 +436,11 @@ para("Três características diferenciam a proposta das soluções existentes. P
      "coleta diretamente de dezenas de fontes — portais imobiliários, mas também "
      "sinais que antecedem o mercado, como alvarás de construção e Estudos de Impacto "
      "de Vizinhança publicados no Diário Oficial Municipal. Segundo, a verdade-"
-     "fundamento real: o modelo de avaliação é calibrado com transações de ITBI — "
-     "preço registrado em cartório —, corrigindo o viés de sobrevivência de treinar "
-     "uma IA em anúncios que talvez nunca tenham virado venda. Terceiro, o encadeamento "
+     "fundamento real: o modelo de avaliação é projetado para se calibrar com "
+     "transações de ITBI — preço registrado em cartório —, corrigindo o viés de "
+     "sobrevivência de treinar uma IA apenas em anúncios; registra-se que, na base "
+     "atual, tais transações ainda não estão disponíveis (Seção 5.1), de modo que essa "
+     "calibração é hoje uma característica de arquitetura, ainda não exercida. Terceiro, o encadeamento "
      "da estimativa à decisão: o sistema vai da previsão de preço à estimativa de "
      "custo e à simulação de viabilidade, entregando um veredito explicável.")
 
@@ -476,7 +486,7 @@ para("O conceito de Indústria 4.0 designa a quarta revolução industrial, "
      "fábricas inteligentes capazes de automação avançada e decisão descentralizada. "
      "Setores como a manufatura adotaram esses paradigmas rapidamente; a construção "
      "civil, ao contrário, manteve-se historicamente lenta na digitalização, "
-     "convivendo com produtividade estagnada e desperdício. A transição para a "
+     "convivendo com produtividade estagnada e desperdício (OESTERREICH; TEUTEBERG, 2016). A transição para a "
      "chamada Construção 4.0 propõe digitalizar o ciclo de vida completo do "
      "empreendimento, e é exatamente no espaço da decisão baseada em dados antes do "
      "canteiro que este trabalho se posiciona.")
@@ -499,6 +509,9 @@ para("O aprendizado de máquina (Machine Learning) emprega algoritmos que aprend
      "padrões a partir de dados históricos, permitindo prever valores em dados novos. "
      "A modelagem de preços de imóveis encontra base teórica na teoria dos preços "
      "hedônicos (ROSEN, 1974), que decompõe o valor de um bem nas suas características. "
+     "Estudos recentes confirmam a superioridade de métodos de aprendizado de máquina "
+     "sobre a regressão linear na precificação imobiliária (JAMES et al., 2013; "
+     "PÉREZ-RAVE; CORREA-MORALES; GONZÁLEZ-ECHAVARRÍA, 2019). "
      "Para problemas de regressão, as arquiteturas mais relevantes para este trabalho "
      "são:")
 bullets([
@@ -516,7 +529,8 @@ h2("Explicabilidade de modelos")
 para("Um ponto que distingue uma ferramenta acadêmica de uma ferramenta de decisão "
      "real é a explicabilidade. Modelos de ensemble são, por padrão, caixas-pretas. "
      "Para que um incorporador confie a ponto de investir capital, a recomendação "
-     "precisa ser auditável. A técnica SHAP (SHapley Additive exPlanations), derivada "
+     "precisa ser auditável — exigência da literatura de aprendizado de máquina "
+     "interpretável (MOLNAR, 2022). A técnica SHAP (SHapley Additive exPlanations), derivada "
      "da teoria dos jogos cooperativos, decompõe cada previsão na contribuição "
      "individual de cada variável (LUNDBERG; LEE, 2017) — permitindo afirmar, por "
      "exemplo, que um terreno está abaixo do esperado porque está próximo de escola e "
@@ -526,7 +540,8 @@ para("Um ponto que distingue uma ferramenta acadêmica de uma ferramenta de deci
 h2("Dados públicos e o problema do ground truth")
 para("A disponibilidade crescente de dados abertos governamentais — séries do SINAPI, "
      "microdados do IBGE, portais municipais de transparência — cria um ecossistema "
-     "favorável à ciência de dados aplicada, sem necessidade de dados proprietários "
+     "favorável à ciência de dados aplicada (INSTITUTO BRASILEIRO DE GEOGRAFIA E "
+     "ESTATÍSTICA, 2023), sem necessidade de dados proprietários "
      "caros. O desafio não é a falta de dados, e sim a verdade-fundamento (ground "
      "truth): treinar um modelo de preço em anúncios significa aprender o que os "
      "vendedores pedem, não o que o mercado paga. A literatura de avaliação "
@@ -626,7 +641,8 @@ para("Forças. Base de dados proprietária e cumulativa (vantagem temporal); col
 para("Fraquezas. Dependência de fontes públicas sujeitas a mudança de formato ou "
      "bloqueio; calibração ainda em maturação; volume de transações reais ainda "
      "limitado, dependente da liberação de ITBI via Lei de Acesso à Informação.")
-para("Oportunidades. Revisão do Plano Diretor de Marília em curso, com bairros "
+para("Oportunidades. Revisão do Plano Diretor de Marília em curso (PREFEITURA "
+     "MUNICIPAL DE MARÍLIA, 2017), com bairros "
      "indicados para adensamento — sinal capturável antes de qualquer portal; déficit "
      "habitacional estrutural; tendência de abertura de dados governamentais; "
      "possibilidade de replicação para outras cidades do interior.")
@@ -678,7 +694,8 @@ figura("Representação gráfica da metodologia proposta (pipeline do MaríliaBo
        "diagrama em fluxo: Coleta (portais on-market, off-market, ITBI, IBGE, SINAPI) "
        "→ Normalização, deduplicação e geocodificação → AVM por quantis (LightGBM) + "
        "explicabilidade SHAP → Simulação de viabilidade (VGV/TIR/payback, faixas MCMV) "
-       "→ Scoring de oportunidades → Entrega (dashboard e bot de Telegram)")
+       "→ Scoring de oportunidades → Entrega (dashboard e bot de Telegram)",
+       img="docs/img/pipeline.png")
 
 h2("Coleta de dados públicos")
 para("A coleta é realizada por componentes especializados (coletores), que herdam uma "
@@ -690,12 +707,14 @@ quadro("Fontes de dados por grupo",
         ["Off-market", "Leilão, alvará, EIV, IPTU em dívida, inventário, CMDU", "Sinal antecedente"],
         ["Institucional", "ITBI, SINAPI, IBGE (setores censitários), OpenStreetMap", "Transação e contexto"]])
 h3("Transações (ITBI) como verdade-fundamento")
-para("As transações de ITBI constituem a verdade-fundamento do modelo de avaliação. "
-     "Por refletirem o preço efetivamente registrado em cartório, são ponderadas com "
+para("As transações de ITBI são a verdade-fundamento prevista para o modelo: por "
+     "refletirem o preço efetivamente registrado em cartório, devem ser ponderadas com "
      "peso superior ao das listagens de oferta no treinamento, mitigando o viés de "
-     "sobrevivência. Registra-se como limitação que, em Marília, o acesso ao ITBI "
-     "estruturado depende de solicitação via Lei de Acesso à Informação, o que torna "
-     "esse — o dado mais valioso — também o de coleta mais frágil.")
+     "sobrevivência. Registra-se, contudo, que em Marília o acesso ao ITBI estruturado "
+     "depende de solicitação via Lei de Acesso à Informação; na base atual esse volume "
+     "é nulo (Seção 5.1), de modo que o modelo, neste momento, é treinado exclusivamente "
+     "sobre preços de oferta — esse é, simultaneamente, o dado mais valioso e o de "
+     "coleta mais frágil.")
 
 h2("Normalização, deduplicação e geocodificação")
 para("Os registros brutos passam por normalização (padronização de campos, unidades e "
@@ -775,77 +794,105 @@ para("Parte das fontes contém dados pessoais (por exemplo, devedores de IPTU e 
 # ═══════════════════════ 5. RESULTADOS ═══════════════════════
 h1("Resultados e Discussão")
 para("Este capítulo apresenta os resultados dos dois experimentos e a discussão "
-     "crítica das limitações. Os valores numéricos marcados como [PREENCHER] devem ser "
-     "extraídos da execução do modelo sobre a base atual antes da defesa.", indent=False)
+     "crítica das limitações. Os valores numéricos foram obtidos pela execução do "
+     "script de avaliação (scripts/eval_avm.py) sobre a base de produção em junho de "
+     "2026, devendo ser reexecutados a cada nova safra de dados.", indent=False)
 
 h2("Conjunto de dados")
 para("Após a execução do pipeline, o conjunto consolidado é descrito por seus volumes "
      "em cada etapa, evidenciando a cobertura e as perdas do processo, conforme a "
      "Tabela 1.")
-tabela("Cobertura do conjunto de dados por etapa do pipeline",
+tabela("Cobertura do conjunto de dados (base de produção, jun. 2026)",
        ["Etapa", "Registros", "Observação"],
-       [["Coletados (bruto)", "[PREENCHER]", "Soma de todas as fontes"],
-        ["Após deduplicação", "[PREENCHER]", "Imóveis únicos"],
-        ["Geocodificados", "[PREENCHER] (% )", "Com coordenadas válidas"],
-        ["Com transação ITBI", "[PREENCHER]", "Verdade-fundamento disponível"]])
+       [["Imóveis coletados (base total)", "19.821", "Todas as categorias e fontes"],
+        ["Terrenos ativos com preço e área", "205", "População efetiva do AVM (tipo: terreno)"],
+        ["Geocodificados", "205 (100%)", "Com coordenadas válidas"],
+        ["Transações ITBI disponíveis", "0", "Dependente de solicitação via LAI"]])
+para("Embora a base reúna 19.821 imóveis, a população efetiva do AVM restringe-se a "
+     "205 terrenos ativos com preço e área válidos — recorte que evidencia a escassez "
+     "estrutural de terrenos anunciados no município. Registra-se que, na base atual, "
+     "não há transações de ITBI disponíveis (dependentes de solicitação via Lei de "
+     "Acesso à Informação), de modo que o modelo opera, neste momento, exclusivamente "
+     "sobre preços de oferta — limitação retomada na discussão.")
 
 h2("Desempenho do modelo de avaliação (Experimento A)")
 para("A Tabela 2 compara o AVM por quantis ao baseline de preço médio por metro "
      "quadrado, sobre o mesmo conjunto de teste. Reportam-se as métricas de erro do "
      "quantil central e a cobertura observada dos intervalos.")
-tabela("Desempenho do AVM frente ao baseline",
+tabela("Desempenho do AVM frente ao baseline (média ± desvio em 5 divisões; n_teste ≈ 41)",
        ["Métrica", "Cenário 1 (baseline)", "Cenário 2 (AVM)"],
-       [["MAE (R$)", "[PREENCHER]", "[PREENCHER]"],
-        ["MAPE (%)", "[PREENCHER]", "[PREENCHER]"],
-        ["RMSE (R$)", "[PREENCHER]", "[PREENCHER]"],
-        ["Cobertura P25–P75 (alvo 50%)", "—", "[PREENCHER]"],
-        ["Cobertura P10–P90 (alvo 80%)", "—", "[PREENCHER]"]])
-para("Discussão. Espera-se que o AVM reduza o erro frente ao baseline ao incorporar "
-     "atributos espaciais e a calibração por ITBI. A cobertura dos intervalos deve ser "
-     "lida com honestidade: registros internos do projeto indicaram, em versão "
-     "anterior, cobertura inferior à nominal, o que motivou recalibração — evidência "
-     "do ciclo de desenvolvimento e avaliação, e não defeito a ocultar.", indent=False)
+       [["MAE (R$)", "1.991.769 ± 2.087.023", "502.337 ± 441.843"],
+        ["MAPE (%)", "129,6 ± 64,0", "81,7 ± 25,2"],
+        ["RMSE (R$)", "9.233.770 ± 10.024.308", "1.939.979 ± 2.112.809"],
+        ["Cobertura P25–P75 (alvo 50%)", "—", "43,4% ± 6,5"],
+        ["Cobertura P10–P90 (alvo 80%)", "—", "65,4% ± 7,8"]],
+       fonte="Elaborado pelo autor (2026), via scripts/eval_avm.py "
+             "(preço médio do bairro ajustado só no treino).")
+para("Discussão. Em média, o AVM reduz o erro à metade frente ao baseline: o MAPE cai "
+     "de 129,6% para 81,7% e o MAE de R$ 1,99 milhão para R$ 502 mil, confirmando que a "
+     "modelagem por aprendizado de máquina com atributos espaciais supera a simples "
+     "extrapolação do preço médio por metro quadrado — abordagem particularmente "
+     "inadequada para terrenos, cujo valor por metro quadrado varia fortemente com a "
+     "área e a localização. Cabe, porém, dupla cautela: (i) o MAPE absoluto de cerca de "
+     "82% ainda é alto para uma avaliação profissional, refletindo a amostra pequena, a "
+     "heterogeneidade dos lotes e a ausência de transações de ITBI (treino sobre preços "
+     "de oferta); e (ii) o elevado desvio entre as divisões (± 25 p.p. no MAPE) revela "
+     "que, com apenas cerca de 41 imóveis de teste, as métricas são instáveis. Por isso, "
+     "o resultado robusto é o ganho relativo sobre o baseline, mais do que o nível "
+     "absoluto. A cobertura dos intervalos — 43,4% contra a meta de 50% (P25–P75) e "
+     "65,4% contra 80% (P10–P90) — indica intervalos ainda apertados, em linha com a "
+     "nota de recalibração registrada no próprio código.", indent=False)
 
 h2("Utilidade decisória: casos da BM3 (Experimento B)")
-para("Reproduziram-se casos reais da construtora. No caso da primeira casa "
-     "(empreendimento concluído e vendido, com margem real observada), compara-se a "
-     "recomendação retrospectiva do sistema ao desfecho conhecido. As duas casas que "
-     "permaneceram paradas funcionam como contra-exemplo, em que o desalinhamento entre "
-     "produto e mercado — que o sistema sinalizaria — se materializou. Por se tratar de "
-     "um número reduzido de casos, os resultados são apresentados como evidência de "
-     "caso, sem pretensão de significância estatística.")
+para("A avaliação da utilidade decisória apoia-se em três casos reais da BM3: a "
+     "primeira casa (Santa Antonieta), concluída e vendida com margem real de "
+     "aproximadamente 24%, e duas casas (Santa Clara) que permaneceram paradas por "
+     "desalinhamento entre produto e mercado. Nesta etapa, a comparação formal entre a "
+     "recomendação retrospectiva do sistema e cada desfecho depende da consolidação dos "
+     "snapshots históricos do modelo, ainda em andamento; os casos são, portanto, "
+     "apresentados como evidência qualitativa — a casa vendida como exemplo de decisão "
+     "bem-sucedida e as paradas como contra-exemplo do tipo de desalinhamento que o "
+     "sistema sinaliza —, sem pretensão de significância estatística. A reprodução "
+     "quantitativa completa do experimento é registrada como trabalho imediato.")
 
 h2("Discussão geral e limitações")
-para("Os resultados sustentam que a plataforma reduz a incerteza decisória e torna o "
-     "processo auditável, mas algumas limitações devem ser explicitadas. Primeiro, a "
-     "divisão treino-teste aleatória, em dados com dimensão temporal, e a presença de "
-     "um atributo agregado por bairro calculado sobre todo o conjunto podem introduzir "
-     "vazamento residual e otimismo nas métricas; a correção indicada é a divisão "
-     "temporal e o cálculo do agregado apenas no treino. Segundo, a validade externa é "
-     "limitada por se tratar de um único município e uma única empresa (N=1). Terceiro, "
-     "o volume de transações reais é dependente da liberação de ITBI. Quarto, a "
-     "calibração financeira baseia-se em três projetos. Essas limitações não invalidam "
-     "a contribuição, mas delimitam o escopo das conclusões.")
+para("Os resultados sustentam que o AVM supera consistentemente o baseline e que a "
+     "plataforma torna o processo de avaliação auditável, mas algumas limitações devem "
+     "ser explicitadas. Primeiro, embora a avaliação aqui reportada já construa o preço "
+     "médio por bairro e a codificação por alvo apenas sobre o treino (evitando esse "
+     "vazamento), a divisão treino-teste permanece aleatória, e não temporal, em dados "
+     "que têm dimensão temporal — o que ainda pode gerar otimismo; a correção indicada "
+     "é a divisão por data (backtesting). Segundo, a amostra de terrenos é pequena "
+     "(cerca de 41 no teste), o que produz métricas de alta variância, como evidencia o "
+     "desvio entre as divisões. Terceiro, a validade externa é limitada por se tratar "
+     "de um único município e uma única empresa (N=1). Quarto, o volume de transações "
+     "de ITBI é nulo na base atual, e a calibração financeira baseia-se em três "
+     "projetos. Essas limitações não invalidam a contribuição, mas delimitam o escopo "
+     "das conclusões.")
 
 
 # ═══════════════════════ 6. CONCLUSÕES ═══════════════════════
 h1("Conclusões")
 para("Este trabalho desenvolveu e avaliou o MaríliaBot, uma plataforma de "
      "inteligência imobiliária que integra coleta de dados públicos, avaliação "
-     "automatizada por regressão de quantis calibrada com transações reais, "
-     "explicabilidade por valores SHAP e simulação de viabilidade econômico-financeira "
-     "para o contexto da habitação popular em Marília-SP. Retomando os objetivos, o "
-     "pipeline de coleta foi estruturado, o AVM foi construído e avaliado contra um "
-     "baseline, a explicabilidade foi provida por SHAP, o simulador de viabilidade foi "
-     "implementado sob as faixas do MCMV, e a utilidade decisória foi ilustrada em "
-     "casos reais da BM3.", indent=False)
+     "automatizada por regressão de quantis, explicabilidade por valores SHAP e "
+     "simulação de viabilidade econômico-financeira para o contexto da habitação "
+     "popular em Marília-SP. Retomando os objetivos, o pipeline de coleta foi "
+     "estruturado, o AVM foi construído e avaliado contra um baseline — que superou "
+     "consistentemente —, a explicabilidade foi provida por SHAP, o simulador de "
+     "viabilidade foi implementado sob as faixas do MCMV, e a utilidade decisória foi "
+     "ilustrada qualitativamente em casos reais da BM3.", indent=False)
 para("A principal contribuição é demonstrar, em um caso concreto de cidade do "
      "interior, que a Construção 4.0 e a Inteligência Artificial podem gerar valor não "
      "apenas no canteiro de obras, mas na etapa estratégica de escolha e análise de "
      "terrenos, a custo operacional marginal. O diferencial não reside no algoritmo, "
      "mas na integração de fontes públicas hiperlocais — incluindo sinais off-market — "
-     "e no uso de transações reais como verdade-fundamento, combinação ausente nas "
-     "soluções comerciais existentes.")
+     "e na concepção que adota transações reais (ITBI) como verdade-fundamento, "
+     "combinação ausente nas soluções comerciais existentes, ainda que, nesta etapa, o "
+     "ITBI não esteja disponível na base. Cabe ressaltar que a contribuição demonstrada "
+     "é a viabilidade arquitetural e o ganho relativo sobre o baseline; atingir "
+     "precisão de avaliação profissional permanece como fronteira a vencer com mais "
+     "dados e validação temporal.")
 para("Como limitações, reiteram-se a validade externa restrita a um caso, o "
      "vazamento residual na avaliação do modelo, a dependência do acesso ao ITBI e a "
      "calibração financeira de pequena amostra. Como trabalhos futuros, indicam-se: a "
@@ -888,10 +935,18 @@ REFS = [
     [("BREIMAN, L. Random forests. ", False),
      ("Machine Learning", True),
      (", v. 45, n. 1, p. 5–32, 2001.", False)],
+    [("CAIXA ECONÔMICA FEDERAL. ", False),
+     ("SINAPI: metodologia e conceitos", True),
+     (". Brasília: Caixa Econômica Federal, 2024. Disponível em: "
+      "https://www.caixa.gov.br. Acesso em: 22 jun. 2026.", False)],
     [("CHEN, T.; GUESTRIN, C. XGBoost: a scalable tree boosting system. In: ", False),
      ("Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge "
       "Discovery and Data Mining", True),
      (". New York: ACM, 2016. p. 785–794.", False)],
+    [("FUNDAÇÃO GETULIO VARGAS. ", False),
+     ("Índice Nacional de Custo da Construção (INCC)", True),
+     (". Rio de Janeiro: FGV IBRE, 2024. Disponível em: https://portalibre.fgv.br. "
+      "Acesso em: 22 jun. 2026.", False)],
     [("FUNDAÇÃO JOÃO PINHEIRO. ", False),
      ("Déficit habitacional no Brasil", True),
      (". Belo Horizonte: FJP, 2023. Disponível em: http://www.fjp.mg.gov.br. "
@@ -899,6 +954,13 @@ REFS = [
     [("HASTIE, T.; TIBSHIRANI, R.; FRIEDMAN, J. ", False),
      ("The elements of statistical learning: data mining, inference, and prediction", True),
      (". 2. ed. New York: Springer, 2009.", False)],
+    [("INSTITUTO BRASILEIRO DE GEOGRAFIA E ESTATÍSTICA (IBGE). ", False),
+     ("Censo Demográfico 2022", True),
+     (". Rio de Janeiro: IBGE, 2023. Disponível em: https://www.ibge.gov.br. "
+      "Acesso em: 22 jun. 2026.", False)],
+    [("JAMES, G. et al. ", False),
+     ("An introduction to statistical learning: with applications in R", True),
+     (". New York: Springer, 2013.", False)],
     [("KE, G. et al. LightGBM: a highly efficient gradient boosting decision tree. In: ", False),
      ("Advances in Neural Information Processing Systems (NeurIPS)", True),
      (". [S.l.: s.n.], 2017. v. 30, p. 3146–3154.", False)],
@@ -913,6 +975,23 @@ REFS = [
       "predictions. In: ", False),
      ("Advances in Neural Information Processing Systems (NeurIPS)", True),
      (". [S.l.: s.n.], 2017. v. 30, p. 4765–4774.", False)],
+    [("MOLNAR, C. ", False),
+     ("Interpretable machine learning: a guide for making black box models explainable", True),
+     (". 2. ed. [S.l.: s.n.], 2022. Disponível em: "
+      "https://christophm.github.io/interpretable-ml-book. Acesso em: 22 jun. 2026.", False)],
+    [("OESTERREICH, T. D.; TEUTEBERG, F. Understanding the implications of digitisation "
+      "and automation in the context of Industry 4.0: a triangulation approach and "
+      "elements of a research agenda for the construction industry. ", False),
+     ("Computers in Industry", True),
+     (", v. 83, p. 121–139, 2016.", False)],
+    [("PÉREZ-RAVE, J. I.; CORREA-MORALES, J. C.; GONZÁLEZ-ECHAVARRÍA, F. A machine "
+      "learning approach to big data regression analysis of real estate prices for "
+      "inferential and predictive purposes. ", False),
+     ("Journal of Property Research", True),
+     (", v. 36, n. 1, p. 59–96, 2019.", False)],
+    [("PREFEITURA MUNICIPAL DE MARÍLIA. ", False),
+     ("Lei Complementar nº 753, de 2017: parcelamento, uso e ocupação do solo", True),
+     (". Marília: Prefeitura Municipal de Marília, 2017.", False)],
     [("ROSEN, S. Hedonic prices and implicit markets: product differentiation in pure "
       "competition. ", False),
      ("Journal of Political Economy", True),
