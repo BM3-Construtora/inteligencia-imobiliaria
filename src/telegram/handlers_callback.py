@@ -70,7 +70,13 @@ def _build_keyboard(opp_id: int, listing_id: int, votes: dict[str, list[str]]) -
     ])
 
 
-async def _edit_keyboard(query, opp_id: int, listing_id: int, votes: dict[str, list[str]]) -> None:
+async def _edit_keyboard(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    opp_id: int,
+    listing_id: int,
+    votes: dict[str, list[str]],
+) -> None:
     """Edita o reply_markup em TODOS os cards conhecidos para este opp_id.
 
     Atualiza a mensagem clicada diretamente via query, e busca outros
@@ -96,12 +102,11 @@ async def _edit_keyboard(query, opp_id: int, listing_id: int, votes: dict[str, l
             .execute()
         )
         clicked_msg_id = query.message.message_id
-        bot = query._bot  # acesso interno ao bot do contexto
         for row in rows.data or []:
             if row["message_id"] == clicked_msg_id:
                 continue  # já editado acima
             try:
-                await bot.edit_message_reply_markup(
+                await context.bot.edit_message_reply_markup(
                     chat_id=row["chat_id"],
                     message_id=row["message_id"],
                     reply_markup=keyboard,
@@ -172,9 +177,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = query.data
     try:
         if data.startswith("deal:visit:"):
-            await _handle_deal_visit(query, data)
+            await _handle_deal_visit(query, context, data)
         elif data.startswith("deal:ignore:"):
-            await _handle_deal_ignore(query, data)
+            await _handle_deal_ignore(query, context, data)
         elif data.startswith("ficha:"):
             await query.answer()
             await _handle_ficha(query, data)
@@ -194,7 +199,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # deal:visit
 # ---------------------------------------------------------------------------
 
-async def _handle_deal_visit(query, data: str) -> None:
+async def _handle_deal_visit(query, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     parts = data.split(":")
     if len(parts) < 4:
         await query.answer("Callback inválido.", show_alert=True)
@@ -215,7 +220,7 @@ async def _handle_deal_visit(query, data: str) -> None:
         return
 
     votes = _load_votes(db, opp_id)
-    await _edit_keyboard(query, opp_id, listing_id, votes)
+    await _edit_keyboard(query, context, opp_id, listing_id, votes)
 
     # Cria deal apenas se é primeiro voto "visit" e não existe deal aberto
     if is_new and not _deal_already_open(db, listing_id):
@@ -241,7 +246,7 @@ async def _handle_deal_visit(query, data: str) -> None:
 # deal:ignore
 # ---------------------------------------------------------------------------
 
-async def _handle_deal_ignore(query, data: str) -> None:
+async def _handle_deal_ignore(query, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     parts = data.split(":")
     if len(parts) < 4:
         await query.answer("Callback inválido.", show_alert=True)
@@ -262,7 +267,7 @@ async def _handle_deal_ignore(query, data: str) -> None:
         return
 
     votes = _load_votes(db, opp_id)
-    await _edit_keyboard(query, opp_id, listing_id, votes)
+    await _edit_keyboard(query, context, opp_id, listing_id, votes)
 
     # Registra abandon apenas no primeiro voto ignore (sem deal aberto)
     if is_new and not _deal_already_open(db, listing_id):
