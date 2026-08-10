@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Search, TrendingUp, TrendingDown, Minus, Home, Building, Landmark, Store, Trees, AlertTriangle } from 'lucide-react'
 import { StatCard } from './StatCard'
-import { useBairros, type BairroData } from '../hooks/useSupabase'
+import { useBairros, useBairroLandTrends, type BairroData, type TrendPoint } from '../hooks/useSupabase'
 
 const TYPE_META: Record<string, { pt: string; icon: typeof Home; dot: string }> = {
   house: { pt: 'Casa', icon: Home, dot: 'bg-emerald-400' },
@@ -51,6 +51,7 @@ function scoreFor(d: BairroData, key: SortKey): number {
 
 export function BairroPanel() {
   const { bairros, loading } = useBairros()
+  const { trends } = useBairroLandTrends()
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('ativos')
   const [selected, setSelected] = useState<string | null>(null)
@@ -166,7 +167,7 @@ export function BairroPanel() {
         </aside>
 
         {/* Detalhe do bairro */}
-        {current ? <BairroDetail d={current} city={city} /> : (
+        {current ? <BairroDetail d={current} city={city} trend={trends[current.resumo.bairro] || []} /> : (
           <div className="bg-slate-800/50 rounded-xl border border-slate-800 p-12 text-center text-slate-500">
             Selecione um bairro para ver a ficha.
           </div>
@@ -189,8 +190,36 @@ function Delta({ val, city }: { val: number | null; city: number | null }) {
   )
 }
 
-function BairroDetail({ d, city }: { d: BairroData; city: { ppm2: Record<string, number | null> } }) {
+function Sparkline({ points }: { points: TrendPoint[] }) {
+  const w = 280, h = 60, pad = 5
+  const ys = points.map(p => p.ppm2)
+  const minY = Math.min(...ys), maxY = Math.max(...ys)
+  const rangeY = maxY - minY || 1
+  const x = (i: number) => pad + (i / (points.length - 1)) * (w - 2 * pad)
+  const y = (v: number) => h - pad - ((v - minY) / rangeY) * (h - 2 * pad)
+  const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.ppm2).toFixed(1)}`).join(' ')
+  const area = `${line} L${x(points.length - 1).toFixed(1)},${h - pad} L${x(0).toFixed(1)},${h - pad} Z`
+  const last = points[points.length - 1]
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-16" preserveAspectRatio="none" role="img" aria-label="tendência de preço/m²">
+      <defs>
+        <linearGradient id="spark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgb(129 140 248)" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="rgb(129 140 248)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#spark)" />
+      <path d={line} fill="none" stroke="rgb(129 140 248)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      <circle cx={x(points.length - 1)} cy={y(last.ppm2)} r="2.5" fill="rgb(165 180 252)" />
+    </svg>
+  )
+}
+
+function BairroDetail({ d, city, trend }: { d: BairroData; city: { ppm2: Record<string, number | null> }; trend: TrendPoint[] }) {
   const r = d.resumo
+  const trendPct = trend.length >= 2 && trend[0].ppm2
+    ? Math.round((100 * (trend[trend.length - 1].ppm2 - trend[0].ppm2)) / trend[0].ppm2)
+    : null
   const types = TYPE_ORDER.filter(t => d.tipos[t] && (d.tipos[t].total || 0) > 0)
   const rentTypes = TYPE_ORDER.filter(t => d.tipos[t] && (d.tipos[t].aluguel_n || 0) > 0)
   const absTypes = TYPE_ORDER.filter(t => d.tipos[t] && (d.tipos[t].hist_total || 0) >= 2)
@@ -248,6 +277,31 @@ function BairroDetail({ d, city }: { d: BairroData; city: { ppm2: Record<string,
           </div>
         ) : <p className="text-slate-500 text-sm">Sem imóveis ativos com preço.</p>}
       </div>
+
+      {/* Tendência de preço (terreno) */}
+      {trend.length >= 2 && (
+        <div className="bg-slate-800/50 rounded-xl border border-slate-800 p-5">
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <div>
+              <h3 className="text-white font-semibold text-sm">Tendência de preço/m² · terreno</h3>
+              <p className="text-xs text-slate-500">Média por bairro ao longo das coletas ({trend.length} pontos).</p>
+            </div>
+            {trendPct != null && (
+              <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendPct > 0 ? 'text-emerald-400' : trendPct < 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                {trendPct > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : trendPct < 0 ? <TrendingDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                {trendPct > 0 ? '+' : ''}{trendPct}% no período
+              </span>
+            )}
+          </div>
+          <div className="mt-3">
+            <Sparkline points={trend} />
+            <div className="flex justify-between text-[11px] text-slate-500 mt-1 tabular-nums">
+              <span>{ppm2(trend[0].ppm2)}<span className="text-slate-600 ml-1">{trend[0].date.slice(5)}</span></span>
+              <span>{ppm2(trend[trend.length - 1].ppm2)}<span className="text-slate-600 ml-1">{trend[trend.length - 1].date.slice(5)}</span></span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {/* Absorção */}
