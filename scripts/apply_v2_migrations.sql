@@ -791,6 +791,8 @@ CREATE INDEX IF NOT EXISTS idx_vision_listing ON listing_vision_details (listing
 -- SECURITY DEFINER: rodam como o dono (bypass RLS), leitura apenas, e são
 -- concedidas ao papel anon. Assim o front lê o mapa sem precisar abrir as
 -- tabelas base ao público.
+-- search_path inclui `extensions` porque no Supabase o PostGIS (ST_AsGeoJSON)
+-- vive nesse schema, não em public.
 
 -- Setores censitários como GeoJSON, com renda/densidade para choropleth.
 CREATE OR REPLACE FUNCTION census_sectors_geojson()
@@ -805,7 +807,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
   SELECT
     cs.sector_code,
@@ -831,7 +833,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
   SELECT name, label_pt, latitude, longitude, radius_m, description
   FROM economic_centroids
