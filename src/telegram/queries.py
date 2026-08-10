@@ -8,6 +8,8 @@ from typing import Any
 from src.db import get_client
 from src.viability import simulate_project, MCMV_FAIXAS
 
+_TIER_EMOJI = {"A": "🟢", "B": "🟡", "C": "🟠", "D": "🔴"}
+
 
 def get_top_opportunities(limit: int = 10) -> str:
     """Get top scored opportunities formatted for Telegram."""
@@ -120,6 +122,129 @@ def get_neighborhood_analysis(name: str) -> str:
             lines.append(f"  Score {o['score']:.0f} — {price}")
 
     return "\n".join(lines)
+
+
+def get_construtora_rating_text(nome_or_cnpj: str) -> str:
+    """Rating público de uma construtora (dados DOM-MAR + CNPJ). Para /construtora."""
+    from src.rating_construtoras import get_construtora_rating
+
+    r = get_construtora_rating(nome_or_cnpj)
+    if not r:
+        return (
+            f"🏗 Construtora '{nome_or_cnpj}' não encontrada no radar público.\n"
+            "_Base: alvarás e habite-se do Diário Oficial de Marília; "
+            "pode não ter registros nos últimos anos._"
+        )
+
+    nome = r.get("razao_social") or r.get("nome") or nome_or_cnpj
+    tier = (r.get("tier") or "").upper()
+    emoji = _TIER_EMOJI.get(tier, "⚪")
+    score = r.get("score_geral")
+
+    lines = [f"🏗 *{nome}*"]
+    if tier and score is not None:
+        lines.append(f"{emoji} Tier *{tier}* — score {float(score):.0f}/100")
+    elif score is not None:
+        lines.append(f"Score geral: {float(score):.0f}/100")
+
+    subs = []
+    for label, key in (("Entrega", "score_entrega"), ("Prazo", "score_prazo"), ("Volume", "score_volume")):
+        v = r.get(key)
+        if v is not None:
+            subs.append(f"{label} {float(v):.0f}")
+    if subs:
+        lines.append("   " + " | ".join(subs))
+
+    alvaras = r.get("total_alvaras") or 0
+    habite = r.get("total_habite_se") or 0
+    if alvaras or habite:
+        lines.append(f"Obras: {habite} concluídas de {alvaras} alvarás")
+    pend = r.get("alvaras_sem_habite_se") or 0
+    if pend:
+        lines.append(f"Em aberto (sem habite-se): {pend}")
+
+    tempo = r.get("tempo_medio_obra_dias")
+    if tempo:
+        lines.append(f"Tempo médio de obra: {float(tempo):.0f} dias (~{float(tempo) / 30:.0f} meses)")
+
+    bairros = r.get("bairros_atuacao") or []
+    if bairros:
+        shown = ", ".join(bairros[:5])
+        extra = f" (+{len(bairros) - 5})" if len(bairros) > 5 else ""
+        lines.append(f"Atuação: {shown}{extra}")
+    if r.get("bairro_principal"):
+        lines.append(f"Bairro principal: {r['bairro_principal']}")
+
+    cnpj_bits = []
+    if r.get("situacao_cadastral"):
+        cnpj_bits.append(str(r["situacao_cadastral"]))
+    if r.get("porte"):
+        cnpj_bits.append(str(r["porte"]))
+    if r.get("capital_social"):
+        cnpj_bits.append(f"capital R$ {float(r['capital_social']):,.0f}".replace(",", "."))
+    if cnpj_bits:
+        lines.append(f"CNPJ: {' · '.join(cnpj_bits)}")
+
+    flags = []
+    if r.get("tem_embargo"):
+        flags.append("embargo")
+    if r.get("tem_processo_tjsp"):
+        flags.append("processo TJSP")
+    risco = r.get("cnpj_risco")
+    if risco and str(risco).lower() not in ("baixo", "none", ""):
+        flags.append(f"risco CNPJ {risco}")
+    if flags:
+        lines.append(f"🔴 Sinais de risco: {', '.join(flags)}")
+
+    if r.get("ultima_atividade_date"):
+        lines.append(f"_Última atividade: {r['ultima_atividade_date']}_")
+
+    lines.append("")
+    lines.append("_Base: dados públicos DOM-MAR + Receita Federal. Referência, não due diligence formal._")
+    return "\n".join(lines)
+
+
+def get_bairro_construtoras(neighborhood: str, limit: int = 3) -> list[str]:
+    """Top construtoras atuando num bairro (view construtoras_por_bairro).
+
+    Retorna linhas markdown compactas para embutir em outras respostas (ex: ficha).
+    Best-effort: qualquer erro/ausência de dados devolve lista vazia.
+    """
+    if not neighborhood:
+        return []
+    db = get_client()
+    try:
+        result = (
+            db.table("construtoras_por_bairro")
+            .select("construtora, alvaras_no_bairro")
+            .ilike("neighborhood", f"%{neighborhood}%")
+            .order("alvaras_no_bairro", desc=True)
+            .limit(limit)
+            .execute()
+        )
+    except Exception:
+        return []
+
+    lines: list[str] = []
+    for row in result.data or []:
+        nome = row.get("construtora") or "?"
+        n_alv = row.get("alvaras_no_bairro") or 0
+        tier_mark = ""
+        try:
+            rt = (
+                db.table("construtoras_rating")
+                .select("tier")
+                .ilike("nome", f"%{nome}%")
+                .limit(1)
+                .execute()
+            )
+            if rt.data and rt.data[0].get("tier"):
+                t = str(rt.data[0]["tier"]).upper()
+                tier_mark = f" {_TIER_EMOJI.get(t, '')}{t}"
+        except Exception:
+            pass
+        lines.append(f"• {nome}{tier_mark} — {n_alv} alvará(s) em 36 meses")
+    return lines
 
 
 def get_market_summary() -> str:

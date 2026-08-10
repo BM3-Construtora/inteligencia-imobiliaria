@@ -393,6 +393,15 @@ def generate_ficha(query: str) -> str:
     # --- 6) Risks ---
     risks = _fetch_risks(db, neighborhood, lat or 0, lng or 0) if time_left() > 2 else []
 
+    # --- 6b) Construtoras atuando no bairro (quem constrói aqui) ---
+    construtoras: list[str] = []
+    if neighborhood and time_left() > 2:
+        try:
+            from src.telegram.queries import get_bairro_construtoras
+            construtoras = get_bairro_construtoras(neighborhood, limit=3)
+        except Exception as exc:
+            logger.debug(f"[ficha] construtoras unavailable: {exc}")
+
     # --- 7) Render ---
     return _render_ficha(
         label=label,
@@ -406,6 +415,7 @@ def generate_ficha(query: str) -> str:
         viability=viability_studies,
         viability_failed=viability_failed,
         risks=risks,
+        construtoras=construtoras,
         matched_listing=matched_listing,
     )
 
@@ -497,6 +507,7 @@ def _render_ficha(
     viability: dict[str, Optional[dict[str, Any]]],
     viability_failed: bool,
     risks: list[str],
+    construtoras: list[str],
     matched_listing: Optional[dict[str, Any]],
 ) -> str:
     lines: list[str] = []
@@ -599,6 +610,13 @@ def _render_ficha(
     else:
         lines.append("_Nenhum risco regulatório detectado para a região._")
     lines.append("")
+
+    # Construtoras no bairro (só aparece quando há dado)
+    if construtoras:
+        lines.append("*🏗 Quem constrói neste bairro*")
+        lines.extend(construtoras)
+        lines.append("_Tier A-D por histórico público de entrega/prazo._")
+        lines.append("")
 
     # Verdict
     verdict, motivo, teto = _verdict(viability, avm, user_price, user_area)

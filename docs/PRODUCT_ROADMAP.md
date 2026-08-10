@@ -39,7 +39,7 @@ Ordenado por valor × esforço. Dado já computado em todos.
 
 | # | Produto | O que liga | Onde | Esforço |
 |---|---|---|---|---|
-| 1 | Rating de construtora | `construtoras_rating` + CNPJ/sócios/risco (0 consumidores) | `/construtora <nome>` no bot + "quem constrói neste bairro" na ficha + tela no dashboard | Baixo |
+| 1 | Rating de construtora | `construtoras_rating` + CNPJ/sócios/risco (0 consumidores) | ✅ `/construtora <nome>` no bot + "quem constrói neste bairro" na ficha (feito). Falta: tela no dashboard | Baixo |
 | 2 | Subprecificados + SHAP | `avm_predictions` (P10-P90, `mispricing_pct`, `is_undervalued`, `shap_summary` PT-BR) | tela "abaixo do valor" no dashboard; reaproveitar `avm_explain.py` (órfão) | Baixo |
 | 3 | Busca semântica / RAG regulatório | `search_documents` sobre CMDU, alvarás, EIV, plano diretor (indexado, sem chamador) | `/regras <pergunta>` no bot + busca no dashboard | Médio |
 | 4 | Radar de lançamentos futuros | `radar_concorrencia` (alvará 18-36 meses antes) + `radar_upzoning` | tela "o que vem por aí por bairro" + alerta | Médio |

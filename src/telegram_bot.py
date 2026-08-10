@@ -34,6 +34,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "*Comandos:*\n"
         "/top — Top 10 oportunidades de terrenos\n"
         "/bairro <nome> — Analise completa de um bairro\n"
+        "/construtora <nome> — Rating de uma construtora (obras, prazo, risco)\n"
         "/viabilidade <preco> <area> — Simular projeto MCMV\n"
         "/ficha <endereco|CEP|coord|URL> — Ficha completa do terreno\n"
         "/mercado — Resumo geral do mercado\n"
@@ -67,6 +68,21 @@ async def cmd_bairro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"Analisando {name}...")
     from src.telegram.queries import get_neighborhood_analysis
     text = get_neighborhood_analysis(name)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def cmd_construtora(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Public rating of a construction company."""
+    if not context.args:
+        await update.message.reply_text(
+            "Use: /construtora <nome ou CNPJ>\nExemplo: /construtora MRV"
+        )
+        return
+
+    termo = " ".join(context.args)
+    await update.message.reply_text(f"Buscando {termo}...")
+    from src.telegram.queries import get_construtora_rating_text
+    text = get_construtora_rating_text(termo)
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
@@ -168,6 +184,7 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("top", cmd_top))
     app.add_handler(CommandHandler("bairro", cmd_bairro))
+    app.add_handler(CommandHandler("construtora", cmd_construtora))
     app.add_handler(CommandHandler("viabilidade", cmd_viabilidade))
     app.add_handler(CommandHandler("mercado", cmd_mercado))
     app.add_handler(CommandHandler("relatorio", cmd_relatorio))
