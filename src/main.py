@@ -48,6 +48,7 @@ Comandos:
   enrich-llm             Enriquecimento com Gemini (atributos + bairros)
   trends                 Detecta tendências de preço por bairro
   score-llm              Second opinion LLM nas top oportunidades
+  llm-cost [dias]        Relatório de custo de LLM (tokens + USD, default 30d)
   risk                   Avaliação de risco (zoneamento, legal, ambiental)
   viability              Simulação de viabilidade MCMV (4 cenários)
   notify                 Envia alertas Telegram para oportunidades
@@ -652,6 +653,10 @@ def main() -> None:
         logger.info(f"=== Starting listing vision (limit={limit}) ===")
         s = run_vision_listings(limit=limit)
         logger.info(f"=== vision-listings done: {s} ===")
+    elif command == "llm-cost":
+        from src.llm_usage import report_usage
+        days = int(args[1]) if len(args) > 1 else 30
+        report_usage(days=days)
     elif command == "health-check":
         from src.health import run_health_check
         logger.info("=== Starting health-check ===")

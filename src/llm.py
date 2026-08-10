@@ -39,11 +39,26 @@ def _get_client():
     return _client
 
 
-def _generate(prompt: str, max_tokens: int = 1000, thinking: bool = False) -> Optional[str]:
+def _record_usage(model: str, task: str, response: Any) -> None:
+    """Registra tokens/custo da chamada na telemetria. Nunca quebra o fluxo."""
+    try:
+        from src.llm_usage import record_llm_usage
+        record_llm_usage(model, task, response, llm_mode=get_llm_mode())
+    except Exception:
+        logger.debug("[llm] Falha ao registrar telemetria de uso", exc_info=True)
+
+
+def _generate(
+    prompt: str,
+    max_tokens: int = 1000,
+    thinking: bool = False,
+    task: str = "generate",
+) -> Optional[str]:
     """Call Gemini and return the text response.
 
     `thinking=False` (default) disables Gemini 2.5 reasoning tokens — big cost cut for
     structured-output batch tasks. Set True only when answer quality needs reasoning.
+    `task` rotula a chamada na telemetria de custo (tabela llm_usage).
     """
     if not GEMINI_API_KEY:
         return None
@@ -67,6 +82,7 @@ def _generate(prompt: str, max_tokens: int = 1000, thinking: bool = False) -> Op
             contents=prompt,
             config=types.GenerateContentConfig(**cfg_kwargs),
         )
+        _record_usage(MODEL, task, response)
         # Extract text — try .text first, then parts
         if response.text:
             return response.text.strip()
@@ -140,7 +156,7 @@ Retorne APENAS um JSON válido com estes campos:
 Se não souber o valor, use null. Se a descrição não tiver info útil, retorne {{}}.
 """
 
-    text = _generate(prompt, max_tokens=800)
+    text = _generate(prompt, max_tokens=800, task="extract_attributes")
     return _parse_json(text)
 
 
@@ -159,7 +175,7 @@ def batch_normalize_neighborhoods(names: list[str]) -> dict[str, str]:
         f"Bairros:\n{names_list}"
     )
 
-    text = _generate(prompt, max_tokens=1500)
+    text = _generate(prompt, max_tokens=1500, task="normalize_neighborhoods")
     result = _parse_json(text)
     return result if isinstance(result, dict) else {}
 
@@ -178,7 +194,7 @@ Score numérico: {numeric_score:.0f}/100
 Dê uma nota de 0 a 10 para potencial de investimento e justifique em 1 frase curta.
 Retorne JSON: {{"nota": N, "justificativa": "..."}}"""
 
-    text = _generate(prompt, max_tokens=200)
+    text = _generate(prompt, max_tokens=200, task="score_opportunity")
     return _parse_json(text)
 
 
@@ -193,7 +209,7 @@ def assess_risk(listing_data: dict[str, Any]) -> Optional[dict[str, Any]]:
         f"{{\"zoneamento\":N,\"ambiental\":N,\"infra\":N,\"legal\":N,\"mercado\":N,\"resumo\":\"max 10 palavras\"}}"
     )
 
-    text = _generate(prompt, max_tokens=300)
+    text = _generate(prompt, max_tokens=300, task="assess_risk")
     result = _parse_json(text)
     if not result:
         return None
@@ -208,7 +224,7 @@ def assess_risk(listing_data: dict[str, Any]) -> Optional[dict[str, Any]]:
 
 
 def generate_vision(
-    prompt: str, image_bytes: bytes, max_tokens: int = 1000
+    prompt: str, image_bytes: bytes, max_tokens: int = 1000, task: str = "vision"
 ) -> Optional[str]:
     """Call Gemini Vision with prompt + image bytes. Returns raw text response.
 
@@ -239,6 +255,7 @@ def generate_vision(
             contents=[image_part, prompt],
             config=types.GenerateContentConfig(**cfg_kwargs),
         )
+        _record_usage(MODEL, task, response)
         if response.text:
             return response.text.strip()
         if response.candidates:
