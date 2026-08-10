@@ -208,7 +208,7 @@ def run_hunter() -> dict[str, int]:
                     if percentile_cols_available:
                         logger.warning(
                             "[hunter] Coluna percentile_score ausente em opportunities. "
-                            "Aplique sql/020_hunter_score_history.sql. Pulando writes desta coluna."
+                            "Aplique supabase/migrations/*_hunter_score_history.sql. Pulando writes desta coluna."
                         )
                     percentile_cols_available = False
                     batch = [{k: v for k, v in row.items() if k != "percentile_score"} for row in batch]
@@ -220,7 +220,7 @@ def run_hunter() -> dict[str, int]:
                     if not migration_warned:
                         logger.error(
                             "[hunter] UNIQUE(listing_id) ausente em opportunities. "
-                            "Aplique sql/013_data_quality_fixes.sql. Usando fallback insert/update."
+                            "Aplique supabase/migrations/*_data_quality_fixes.sql. Usando fallback insert/update."
                         )
                         migration_warned = True
                     _fallback_upsert(db, batch)
@@ -239,7 +239,7 @@ def run_hunter() -> dict[str, int]:
                     if "PGRST205" in msg or "hunter_score_history" in msg or "PGRST204" in msg:
                         logger.warning(
                             "[hunter] Tabela hunter_score_history ausente. "
-                            "Aplique sql/020_hunter_score_history.sql. Pulando histórico."
+                            "Aplique supabase/migrations/*_hunter_score_history.sql. Pulando histórico."
                         )
                         history_table_available = False
                         break

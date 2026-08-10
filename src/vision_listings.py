@@ -7,7 +7,7 @@ Extrai: score de conservação (0-10), acabamento, cômodos, problemas visíveis
 Preenche: listings.vision_conservation_score, vision_acabamento, vision_reformado,
           vision_problemas, vision_fotos_analisadas + tabela listing_vision_details.
 
-Criado por sql/050_heritage_vision.sql.
+Criado por supabase/migrations/*_heritage_vision.sql.
 """
 
 from __future__ import annotations

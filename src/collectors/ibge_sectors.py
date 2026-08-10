@@ -4,7 +4,7 @@ Fontes:
   - Malha geográfica: https://servicodados.ibge.gov.br/api/v3/malhas/municipios/3529005
   - Dados de renda: IBGE Censo 2022 tabelas SIDRA (onde disponível)
 
-Tabela destino: census_sectors (criada em sql/042_postgis.sql)
+Tabela destino: census_sectors (criada em supabase/migrations/*_postgis.sql)
 """
 
 from __future__ import annotations

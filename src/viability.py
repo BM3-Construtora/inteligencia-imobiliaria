@@ -693,7 +693,7 @@ def run_viability(
                                 if not legacy_warning_emitted:
                                     logger.warning(
                                         "[viability] Colunas tipadas ausentes em viability_studies. "
-                                        "Aplique sql/015_viability_columns.sql. Usando JSON legado."
+                                        "Aplique supabase/migrations/*_viability_columns.sql. Usando JSON legado."
                                     )
                                     legacy_warning_emitted = True
                                 db.table("viability_studies").insert(base_payload).execute()

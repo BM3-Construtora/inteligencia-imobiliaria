@@ -12,7 +12,7 @@ Outputs:
 - Patches `opportunities.score_breakdown` with predicted_price + price_diff_pct
 - Logs `agent_runs` entry
 
-Schema: sql/023_avm_predictions.sql
+Schema: supabase/migrations/*_avm_predictions.sql
 """
 
 from __future__ import annotations

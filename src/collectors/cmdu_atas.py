@@ -119,7 +119,7 @@ def run_cmdu_collector() -> dict[str, int]:
 
 def _ensure_table(db: Any) -> None:
     """Cria tabela cmdu_atas se não existir (via upsert — Supabase cria automaticamente se migration já aplicada)."""
-    pass  # Migration em sql/048_cmdu_atas.sql — aplicar via Supabase dashboard
+    pass  # Migration em supabase/migrations/*_cmdu_atas.sql — aplicar via Supabase dashboard
 
 
 def _collect_from_api() -> list[dict[str, Any]]:

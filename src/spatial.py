@@ -1,7 +1,7 @@
 """Spatial utilities — proximity enrichment using PostGIS data in Supabase.
 
 Calcula distâncias de listings para POIs e centros econômicos.
-Requer: PostGIS ativado no Supabase (sql/042_postgis.sql aplicado)
+Requer: PostGIS ativado no Supabase (supabase/migrations/*_postgis.sql aplicado)
 
 Funções principais:
   run_proximity_enrichment() — enriquece listings com distâncias a POIs
