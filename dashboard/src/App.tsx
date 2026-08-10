@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Building, Home, Landmark, Trophy, DollarSign } from 'lucide-react'
 import { StatCard } from './components/StatCard'
 import { OpportunitiesTable } from './components/OpportunitiesTable'
+import { UndervaluedTable } from './components/UndervaluedTable'
+import { LoteamentosPanel } from './components/LoteamentosPanel'
 import { MarketCharts } from './components/MarketCharts'
 import { ClassificationSummary } from './components/ClassificationSummary'
 import { PropertyMap } from './components/PropertyMap'
@@ -39,6 +41,8 @@ const PAGE_TITLES: Record<Page, { title: string; subtitle: string }> = {
   viability: { title: 'Calculadora de Viabilidade', subtitle: 'Simule projetos e calcule retorno' },
   market: { title: 'Analise de Mercado', subtitle: 'Graficos, tendencias e benchmarks' },
   opportunities: { title: 'Oportunidades', subtitle: 'Melhores terrenos ranqueados por score' },
+  undervalued: { title: 'Subprecificados', subtitle: 'Imoveis com pedido abaixo do valor justo (AVM)' },
+  loteamentos: { title: 'Novos Loteamentos', subtitle: 'Parcelamentos aprovados — futura oferta de terreno' },
   'match-review': { title: 'Revisao de Matches', subtitle: 'Confirme ou rejeite matches de dedup na zona cinza' },
   projects: { title: 'Projetos BM3', subtitle: 'Projetos proprios de construcao' },
   'data-health': { title: 'Saude dos Dados', subtitle: 'Status do pipeline e qualidade do dataset' },
@@ -184,6 +188,12 @@ function Dashboard() {
 
           {/* OPPORTUNITIES PAGE */}
           {activePage === 'opportunities' && <OpportunitiesTable />}
+
+          {/* UNDERVALUED PAGE */}
+          {activePage === 'undervalued' && <UndervaluedTable />}
+
+          {/* LOTEAMENTOS PAGE */}
+          {activePage === 'loteamentos' && <LoteamentosPanel />}
 
           {/* MATCH REVIEW PAGE */}
           {activePage === 'match-review' && <MatchReview />}

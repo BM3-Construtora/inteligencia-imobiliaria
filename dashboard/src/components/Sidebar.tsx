@@ -11,6 +11,8 @@ import {
   Building2,
   GitCompare,
   MapPinned,
+  TrendingDown,
+  LandPlot,
 } from 'lucide-react'
 
 export type Page =
@@ -21,6 +23,8 @@ export type Page =
   | 'viability'
   | 'market'
   | 'opportunities'
+  | 'undervalued'
+  | 'loteamentos'
   | 'data-health'
   | 'match-review'
   | 'projects'
@@ -33,6 +37,8 @@ const NAV_ITEMS: { key: Page; label: string; icon: typeof LayoutDashboard }[] = 
   { key: 'viability', label: 'Viabilidade', icon: Calculator },
   { key: 'market', label: 'Mercado', icon: BarChart3 },
   { key: 'opportunities', label: 'Oportunidades', icon: Table2 },
+  { key: 'undervalued', label: 'Subprecificados', icon: TrendingDown },
+  { key: 'loteamentos', label: 'Novos Loteamentos', icon: LandPlot },
   { key: 'match-review', label: 'Revisao de Matches', icon: GitCompare },
   { key: 'projects', label: 'Projetos BM3', icon: Building2 },
   { key: 'data-health', label: 'Saude dos Dados', icon: Activity },
