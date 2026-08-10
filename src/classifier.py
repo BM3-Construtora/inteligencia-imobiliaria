@@ -44,6 +44,9 @@ def classify_listing(
     # --- Terrenos ---
     if ptype == "land":
         area = float(listing.get("total_area") or 0)
+        # Gleba/rural: fora do perfil urbano MCMV (loteamento, chácara, fazenda).
+        if area > 2_000:
+            return "terreno_gleba"
         if area >= 1_000:
             return "terreno_grande"
         if price <= 120_000:

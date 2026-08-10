@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 import os
 
 SCORING_MIN_AREA = float(os.getenv("SCORING_MIN_AREA", "200"))
+# Teto de área do funil urbano MCMV. Acima disso é gleba/rural (loteamento,
+# chácara, fazenda) — não serve pra casa MCMV, então não vira oportunidade.
+SCORING_MAX_AREA = float(os.getenv("SCORING_MAX_AREA", "2000"))
 SCORING_MAX_PRICE = float(os.getenv("SCORING_MAX_PRICE", "300000"))
 SCORING_IDEAL_PRICE_M2 = float(os.getenv("SCORING_IDEAL_PRICE_M2", "350"))
 MCMV_MAX_PRICE = float(os.getenv("MCMV_MAX_PRICE", "264000"))
@@ -114,6 +117,13 @@ def run_hunter() -> dict[str, int]:
                 "score_breakdown": breakdown,
             })
             if score < 30:
+                continue
+
+            # Gleba/rural (área conhecida acima do teto urbano) não vira
+            # oportunidade — fica fora do funil MCMV. Área desconhecida (0/None)
+            # não é excluída: pode ser lote urbano sem área parseada.
+            area_val = float(listing.get("total_area") or 0)
+            if area_val > SCORING_MAX_AREA:
                 continue
 
             reason = _build_reason(listing, score, breakdown)

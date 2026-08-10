@@ -19,6 +19,9 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}"
 
 MIN_SCORE_NOTIFY = float(os.getenv("MIN_SCORE_NOTIFY", "70"))
 PRICE_DROP_PCT = float(os.getenv("PRICE_DROP_RENOTIFY_PCT", "5"))
+# Teto de área urbana (espelha SCORING_MAX_AREA do hunter): acima disso é
+# gleba/rural e não deve gerar alerta.
+MAX_AREA_NOTIFY = float(os.getenv("SCORING_MAX_AREA", "2000"))
 
 
 def run_notifier() -> dict[str, int]:
@@ -88,11 +91,14 @@ def run_notifier() -> dict[str, int]:
             if not listing:
                 continue
 
-            # Anti-ruído: nunca dispara item em quarentena (ppm2/área implausível).
-            # Marca como notificado pra não reavaliar toda run.
-            if listing.get("quarantined"):
+            # Anti-ruído: nunca dispara item em quarentena (ppm2/área implausível)
+            # nem gleba/rural (área acima do teto urbano). Marca como notificado
+            # pra não reavaliar toda run.
+            area_val = float(listing.get("total_area") or 0)
+            if listing.get("quarantined") or area_val > MAX_AREA_NOTIFY:
+                motivo = "quarentena" if listing.get("quarantined") else f"gleba ({area_val:.0f}m²)"
                 logger.info(
-                    f"[notifier] Skipping #{opp['id']} — listing {listing.get('id')} em quarentena"
+                    f"[notifier] Skipping #{opp['id']} — listing {listing.get('id')} ({motivo})"
                 )
                 db.table("opportunities").update({
                     "is_notified": True,

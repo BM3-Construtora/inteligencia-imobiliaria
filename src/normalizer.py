@@ -193,7 +193,10 @@ def _validate_listing(data: dict[str, Any]) -> Optional[dict[str, Any]]:
         quarantine_reason = "price_too_low"
     elif price is not None and price > 50_000_000:
         quarantine_reason = "price_too_high"
-    elif total is not None and total > 0 and ppm2 is not None and ppm2 < 300:
+    elif total is not None and total > 0 and ppm2 is not None and ppm2 < 80:
+        # Corte baixo (R$80/m²): pega só erro grosseiro de parse (área inflada
+        # → preço/m² irrisório). Terreno urbano legítimo barato em bairro
+        # periférico fica R$150-300/m² — o scorer premia esses, não quarentena.
         quarantine_reason = "ppm2_too_low"
     elif ppm2 is not None and ppm2 > 30_000:
         quarantine_reason = "ppm2_too_high"

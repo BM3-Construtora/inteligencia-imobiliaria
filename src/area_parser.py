@@ -15,10 +15,15 @@ _AREA_PATTERNS = [
     re.compile(r"[áa]rea\s*(?:de|:)?\s*(\d{2,5}(?:[.,]\d{1,2})?)", re.IGNORECASE),
     # "terreno de 350", "lote de 350"
     re.compile(r"(?:terreno|lote)\s*(?:de|com)?\s*(\d{2,5}(?:[.,]\d{1,2})?)", re.IGNORECASE),
+    # "medindo 350", "medindo aproximadamente 350"
+    re.compile(r"medindo\s*(?:aproximadamente|aprox\.?|cerca\s*de)?\s*(\d{2,5}(?:[.,]\d{1,2})?)", re.IGNORECASE),
+    # "área total de 350", "área total: 350"
+    re.compile(r"[áa]rea\s*total\s*(?:de|:)?\s*(\d{2,5}(?:[.,]\d{1,2})?)", re.IGNORECASE),
 ]
 
+# Dimensões "12x30", "12 x 30", "12m x 30m", "12,5 por 30"
 _DIMS_PATTERN = re.compile(
-    r"(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:x|por|×)\s*(\d{1,3}(?:[.,]\d{1,2})?)",
+    r"(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:m|metros)?\s*(?:x|por|×)\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:m|metros)?",
     re.IGNORECASE,
 )
 
