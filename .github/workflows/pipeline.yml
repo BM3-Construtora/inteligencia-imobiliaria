@@ -18,6 +18,22 @@ env:
   CITY_FOCUS: ${{ vars.CITY_FOCUS }}
 
 jobs:
+  # Checa a presença de GEMINI_API_KEY e expõe como output. O contexto `env`
+  # não é acessível em `if:` de nível de job, então condicionar os jobs LLM
+  # por secret exige um output de job (needs.preflight.outputs.has_gemini).
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      has_gemini: ${{ steps.check.outputs.has_gemini }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "has_gemini=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_gemini=false" >> "$GITHUB_OUTPUT"
+          fi
+
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -97,11 +113,11 @@ jobs:
           command: python -m src.main dedup
 
   enrich:
-    needs: dedup
+    needs: [dedup, preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     continue-on-error: true
-    if: ${{ env.GEMINI_API_KEY != '' }}
+    if: ${{ needs.preflight.outputs.has_gemini == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -189,11 +205,11 @@ jobs:
           command: python -m src.main hunt
 
   score-llm:
-    needs: hunt
+    needs: [hunt, preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
-    if: ${{ env.GEMINI_API_KEY != '' }}
+    if: ${{ needs.preflight.outputs.has_gemini == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -208,11 +224,11 @@ jobs:
           command: python -m src.main score-llm
 
   risk:
-    needs: hunt
+    needs: [hunt, preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
-    if: ${{ env.GEMINI_API_KEY != '' }}
+    if: ${{ needs.preflight.outputs.has_gemini == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -262,8 +278,27 @@ jobs:
           max_attempts: 2
           command: python -m src.main comps
 
+  notify:
+    needs: [hunt, viability, comps]
+    if: ${{ always() && needs.hunt.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 8
+          max_attempts: 2
+          command: python -m src.main notify
+
   summary:
-    needs: [collect, normalize, classify, dedup, enrich, analyst, trends, heat, hunt, score-llm, risk, viability, comps]
+    needs: [collect, normalize, classify, dedup, enrich, analyst, trends, heat, hunt, score-llm, risk, viability, comps, notify]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -290,6 +325,7 @@ jobs:
             echo "| risk       | ${{ needs.risk.result }} |"
             echo "| viability  | ${{ needs.viability.result }} |"
             echo "| comps      | ${{ needs.comps.result }} |"
+            echo "| notify     | ${{ needs.notify.result }} |"
           } > out/summary.md
           cat out/summary.md
       - uses: actions/upload-artifact@v4
