@@ -47,6 +47,21 @@ jobs:
         with:
           version: latest
 
+      # Salvaguarda: um db push com o tracking vazio tentaria reaplicar TODAS as
+      # migrations (várias não-idempotentes) em prod. Aborta se o baseline
+      # (supabase migration repair) ainda não foi feito.
+      - name: Guard baseline — aborta se schema_migrations vazio
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          CNT=$(psql "$SUPABASE_DB_URL" -tAc "select count(*) from supabase_migrations.schema_migrations" 2>/dev/null || echo 0)
+          echo "schema_migrations registradas: ${CNT:-0}"
+          if [ "${CNT:-0}" -lt 40 ]; then
+            echo "::error::Baseline não feito (schema_migrations=${CNT:-0}). Rode 'supabase migration repair --status applied ...' antes de mergear migrations. Abortando para não reaplicar tudo."
+            exit 1
+          fi
+
       - name: Push pending migrations
         if: steps.guard.outputs.ready == 'true'
         env:
