@@ -10,11 +10,13 @@ import {
   ChevronRight,
   Building2,
   GitCompare,
+  MapPinned,
 } from 'lucide-react'
 
 export type Page =
   | 'overview'
   | 'map'
+  | 'bairros'
   | 'decision'
   | 'viability'
   | 'market'
@@ -26,6 +28,7 @@ export type Page =
 const NAV_ITEMS: { key: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'overview', label: 'Visao Geral', icon: LayoutDashboard },
   { key: 'map', label: 'Mapa', icon: Map },
+  { key: 'bairros', label: 'Bairros', icon: MapPinned },
   { key: 'decision', label: 'Decisao', icon: Target },
   { key: 'viability', label: 'Viabilidade', icon: Calculator },
   { key: 'market', label: 'Mercado', icon: BarChart3 },

@@ -7,6 +7,7 @@ import { ClassificationSummary } from './components/ClassificationSummary'
 import { PropertyMap } from './components/PropertyMap'
 import { FilterBar } from './components/FilterBar'
 import { MarketBenchmarks } from './components/MarketBenchmarks'
+import { BairroPanel } from './components/BairroPanel'
 import { PriceTrend } from './components/PriceTrend'
 import { DecisionPanel } from './components/DecisionPanel'
 import { ViabilityCalculator } from './components/ViabilityCalculator'
@@ -33,6 +34,7 @@ const SOURCE_LABELS: Record<string, string> = {
 const PAGE_TITLES: Record<Page, { title: string; subtitle: string }> = {
   overview: { title: 'Visao Geral', subtitle: 'Resumo do mercado imobiliario de Marilia/SP' },
   map: { title: 'Mapa de Bairros', subtitle: 'Visualizacao geografica dos bairros e precos' },
+  bairros: { title: 'Painel do Bairro', subtitle: 'Preco por tipo, aluguel, velocidade de venda e barganhas por bairro' },
   decision: { title: 'Painel de Decisao', subtitle: 'Analise se vale construir em determinado bairro' },
   viability: { title: 'Calculadora de Viabilidade', subtitle: 'Simule projetos e calcule retorno' },
   market: { title: 'Analise de Mercado', subtitle: 'Graficos, tendencias e benchmarks' },
@@ -160,6 +162,9 @@ function Dashboard() {
 
           {/* MAP PAGE */}
           {activePage === 'map' && <PropertyMap />}
+
+          {/* BAIRROS PAGE */}
+          {activePage === 'bairros' && <BairroPanel />}
 
           {/* DECISION PAGE */}
           {activePage === 'decision' && <DecisionPanel />}

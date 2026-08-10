@@ -36,8 +36,8 @@ WITH listing_agg AS (
     percentile_cont(0.5) WITHIN GROUP (ORDER BY total_area)
       FILTER (WHERE is_active AND total_area IS NOT NULL)   AS area_mediana,
     percentile_cont(0.5) WITHIN GROUP (ORDER BY rent_price)
-      FILTER (WHERE rent_price IS NOT NULL)                 AS aluguel_mediano,
-    COUNT(*) FILTER (WHERE rent_price IS NOT NULL)          AS aluguel_n
+      FILTER (WHERE rent_price > 0)                         AS aluguel_mediano,
+    COUNT(*) FILTER (WHERE rent_price > 0)                  AS aluguel_n
   FROM listings
   GROUP BY 1, 2
 ),

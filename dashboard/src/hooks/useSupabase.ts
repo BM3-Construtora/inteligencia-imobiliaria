@@ -378,6 +378,70 @@ export function useCompetitionPoints() {
   return { points }
 }
 
+export interface BairroTipoStat {
+  bairro: string
+  property_type: string
+  total: number | null
+  ativos: number | null
+  mcmv: number | null
+  preco_mediano: number | null
+  preco_medio: number | null
+  ppm2_mediano: number | null
+  area_mediana: number | null
+  aluguel_mediano: number | null
+  aluguel_n: number | null
+  hist_total: number | null
+  saiu_do_ar: number | null
+  taxa_saida_pct: number | null
+  dias_medio: number | null
+  baixaram_preco: number | null
+}
+
+export interface BairroResumo {
+  bairro: string
+  listings_total: number
+  listings_ativos: number
+  mcmv: number
+  mcmv_pct: number | null
+  acessibilidade_media: number | null
+  acc_n: number
+  avm_total: number
+  avm_under: number
+}
+
+export interface BairroData {
+  resumo: BairroResumo
+  tipos: Record<string, BairroTipoStat>
+}
+
+// Painel do Bairro: junta as matviews bairro_resumo + bairro_tipo_stats (sql/053)
+// numa estrutura por bairro. Refresh via refresh_bairro_stats() no pipeline.
+export function useBairros() {
+  const [bairros, setBairros] = useState<Record<string, BairroData>>({})
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetch() {
+      const [resumos, tipos] = await Promise.all([
+        fetchAllRows<BairroResumo>((from) => from.select('*'), 'bairro_resumo'),
+        fetchAllRows<BairroTipoStat>((from) => from.select('*'), 'bairro_tipo_stats'),
+      ])
+
+      const map: Record<string, BairroData> = {}
+      for (const r of resumos) map[r.bairro] = { resumo: r, tipos: {} }
+      for (const t of tipos) {
+        if (!t.property_type || !map[t.bairro]) continue
+        map[t.bairro].tipos[t.property_type] = t
+      }
+      setBairros(map)
+      setLoading(false)
+    }
+    fetch()
+  }, [])
+
+  return { bairros, loading }
+}
+
 export function useClassificationStats() {
   const [tiers, setTiers] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
