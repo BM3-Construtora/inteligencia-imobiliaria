@@ -247,6 +247,33 @@ def get_radar_text(neighborhood: str | None = None, limit: int = 8) -> str:
     else:
         lines.append("_Nenhum sinal de upzoning" + (f" em {neighborhood}." if neighborhood else ".") + "_")
 
+    # 3) Novos loteamentos aprovados (futura oferta de terreno)
+    lines.append("")
+    lines.append("*🧭 Novos loteamentos aprovados* (futura oferta)")
+    try:
+        lq = db.table("parcelamento_solo_marilia").select(
+            "titulo, tipo, issue_date, neighborhood"
+        ).not_.is_("issue_date", "null")
+        if neighborhood:
+            lq = lq.ilike("neighborhood", f"%{neighborhood}%")
+        lot = (lq.order("issue_date", desc=True).limit(limit * 4).execute()).data or []
+    except Exception:
+        lot = []
+
+    if lot:
+        nomeados = [x for x in lot if x.get("titulo")]
+        anon = [x for x in lot if not x.get("titulo")]
+        # Nomeados primeiro (mais acionável), completa com anônimos recentes.
+        display = (nomeados + anon)[:limit]
+        for x in display:
+            data = str(x.get("issue_date") or "")[:10]
+            nome = x.get("titulo") or f"({x.get('tipo') or 'parcelamento'} sem nome)"
+            bairro = x.get("neighborhood")
+            bairro_s = f" — {bairro}" if bairro else ""
+            lines.append(f"• {data} *{nome}*{bairro_s}")
+    else:
+        lines.append("_Nenhum loteamento recente" + (f" em {neighborhood}." if neighborhood else ".") + "_")
+
     return "\n".join(lines)
 
 

@@ -117,6 +117,14 @@ Pendente na Onda 2 (evolução, não bloqueia): geocode fino de alvarás/EIV (ho
 > texto do decreto publicado. Alvo de maior valor: **parcelamento_solo**
 > (loteamentos = futura oferta, sinal público real que existe, ao contrário
 > de alvarás).
+>
+> **Decisão tomada (2026-08-10):** em vez de LLM (custo), corrigi o parser do
+> `parcelamento_solo` com regex direcionado — data 100% (bug `HH:MM:SS`) e
+> nome do loteamento entre aspas (`titulo`, com filtro anti-descritor). Prod:
+> 185 loteamentos, todos datados, 40 nomeados. Exposto como seção "novos
+> loteamentos" no `/radar`. O passe de LLM fica como lever para os nomes/
+> campos dos ~145 restantes cujo decreto não traz o nome entre aspas no
+> snippet.
 
 ---
 
