@@ -39,6 +39,15 @@ _STAGE_ORDER = {
     "abandoned": 100,
 }
 
+# Estágios que contam como acerto do Hunter: recomendação que virou ação real e
+# não foi rejeitada, perdida ou abandonada. rejected/closed_lost NÃO são hit —
+# incluí-los media "alguém foi visitar", não "a recomendação era boa".
+POSITIVE_STAGES = {"visited", "offered", "negotiating", "accepted", "closed_won"}
+
+# Amostra mínima para tratar uma taxa de calibração como estatisticamente útil.
+# Abaixo disso, o drift report não recomenda ajuste de parâmetro de produção.
+MIN_CALIBRATION_SAMPLE = 8
+
 _TERMINAL = {"closed_won", "closed_lost", "abandoned", "rejected"}
 
 
@@ -353,9 +362,7 @@ def run_calibration() -> dict[str, Any]:
                 .execute()
             )
             advanced = {d["listing_id"] for d in (deals.data or [])
-                        if d.get("stage") in _STAGE_ORDER
-                        and _STAGE_ORDER[d["stage"]] >= 1
-                        and d["stage"] != "abandoned"}
+                        if d.get("stage") in POSITIVE_STAGES}
             deals_from_recs = len(advanced)
             hunter_hit_rate = round(deals_from_recs / total_recs, 4) if total_recs else None
     except Exception as exc:
@@ -407,6 +414,7 @@ def run_calibration() -> dict[str, Any]:
         "avm_error_pct": avm_error_pct,
         "viability_error_pct": viability_error_pct,
         "deals_analyzed": viab_n,
+        "avm_n": avm_total,
         "total_recommendations": total_recs,
         "visited": visited,
         "offered": offered,
@@ -440,6 +448,8 @@ def weekly_drift_report() -> str:
     avm_err = cal.get("avm_error_pct")
     viab_err = cal.get("viability_error_pct")
     deals_n = cal.get("deals_analyzed") or 0
+    hunter_n = cal.get("total_recommendations") or 0
+    avm_n = cal.get("avm_n") or 0
 
     # Targets
     HUNTER_TARGET = 0.25
@@ -462,9 +472,15 @@ def weekly_drift_report() -> str:
     lines.append(f"Viability error   | {_fmt_pct(viab_err):>8} | <=±{VIAB_TARGET:.0f}%")
     lines.append("```")
 
-    # Recomendações concretas
+    # Recomendações concretas. Só recomendamos ajuste de parâmetro de produção
+    # quando a amostra da métrica atinge MIN_CALIBRATION_SAMPLE — com N pequeno,
+    # a taxa é ruído e ajustar parâmetro faz mais mal que bem.
     recs: list[str] = []
-    if hunter is not None and hunter < HUNTER_TARGET:
+    insufficient: list[str] = []
+
+    if hunter_n < MIN_CALIBRATION_SAMPLE:
+        insufficient.append(f"Hunter ({hunter_n} recs)")
+    elif hunter is not None and hunter < HUNTER_TARGET:
         recs.append(
             f"• *Hunter*: hit rate {_fmt_rate(hunter)} abaixo do target. "
             f"Considere subir threshold de score (ex: 70 → 75) ou revisar pesos "
@@ -476,32 +492,36 @@ def weekly_drift_report() -> str:
             f"subestimando oportunidades. Reduza threshold para capturar mais leads."
         )
 
-    if avm_err is not None and avm_err > AVM_TARGET:
-        direction = "sobrestima" if avm_err > 0 else "subestima"
+    if avm_n < MIN_CALIBRATION_SAMPLE:
+        insufficient.append(f"AVM ({avm_n} deals)")
+    elif avm_err is not None and avm_err > AVM_TARGET:
         recs.append(
             f"• *AVM*: erro médio {_fmt_pct(avm_err)} (target ±{AVM_TARGET:.0f}%). "
-            f"AVM {direction} preços — ampliar janela de comps em `quick_avm` "
-            f"ou usar comps de bairros vizinhos quando n<10."
+            f"Ampliar janela de comps em `quick_avm` ou usar comps de bairros "
+            f"vizinhos quando n<10."
         )
 
-    if viab_err is not None and viab_err > VIAB_TARGET:
+    if deals_n < MIN_CALIBRATION_SAMPLE:
+        insufficient.append(f"Viability ({deals_n} deals)")
+    elif viab_err is not None and viab_err > VIAB_TARGET:
         recs.append(
             f"• *Viability*: erro médio {_fmt_pct(viab_err)} na margem projetada. "
-            f"Se sistema sobrestima margem em ~{viab_err:.0f}%, ajustar BDI assumption "
-            f"(ex: 22% → {22 + int(viab_err)}%) ou revisar custo SINAPI/m² no `viability.py`."
+            f"Revisar BDI/eficiência e custo SINAPI/m² em `viability.py` "
+            f"(env VIABILITY_BDI_PCT, VIABILITY_EFFICIENCY)."
         )
+
+    if insufficient:
+        recs.insert(0, (
+            f"• *Amostra insuficiente* para calibrar: {', '.join(insufficient)} "
+            f"(mínimo {MIN_CALIBRATION_SAMPLE}). As métricas acima são indicativas; "
+            f"registre mais deals via `/deal_add` antes de ajustar parâmetros."
+        ))
 
     if not recs:
         recs.append("• Sistema dentro dos targets — manter parâmetros atuais.")
 
-    # Garante pelo menos 3 recomendações (preenche com checks operacionais)
+    # Garante pelo menos 3 itens (preenche com checks operacionais)
     if len(recs) < 3:
-        if deals_n < 5:
-            recs.append(
-                f"• *Amostra pequena* ({deals_n} deals). Registre mais visitas via "
-                f"`/deal_add` para que o loop aprenda — métricas atuais têm baixa "
-                f"significância estatística."
-            )
         recs.append(
             "• Revisar manualmente top 3 deals fechados último mês — comparar "
             "narrativa do Hunter `reason` vs motivo real de aceite/rejeição."
