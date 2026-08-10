@@ -21,6 +21,28 @@ Os números confirmam:
 plugar o que já existe na tela e no bot. O custo caro (coleta + LLM) já foi pago;
 falta a última milha barata.
 
+> ## ⚠️ Descoberta operacional (2026-08-10): schema V2 não está em produção
+> Sondando o banco real: as migrations **042–050 nunca foram aplicadas** no
+> Supabase de produção. Aplicadas: `001`, `028` (avm_predictions), `051`
+> (llm_usage). Faltam: census_sectors, economic_centroids, alvaras/eiv,
+> radar_concorrencia, construtoras_rating, listing/document_embeddings, cmdu,
+> plano_diretor, agronegocio, heritage.
+>
+> **Efeito:** das features entregues, só têm dado vivo hoje `/subprecificados`
+> (usa avm_predictions ✅) e os **pins do mapa** (usam opportunities ✅). As
+> demais (`/construtora`, `/regras`, `/radar`, camadas Renda/Polos/Concorrência)
+> retornam estado vazio até o schema ser aplicado — o código está correto e
+> degrada com elegância, mas a tabela não existe.
+>
+> **Também explica** por que os coletores municipais (cmdu, alvara, agronegocio,
+> heritage…) não populam nada: gravam em tabelas inexistentes. O `health-check`
+> da fundação passa a flagrar isso.
+>
+> **Ação:** aplicar `scripts/apply_v2_migrations.sql` (bundle ordenado 042→052,
+> idempotente) no SQL editor do Supabase, depois rodar os coletores
+> (`municipal-data.yml`) para popular. Requer extensões `postgis` (042) e
+> `vector` (047) habilitadas.
+
 ---
 
 ## Fundação — corrigir antes de qualquer produto novo
