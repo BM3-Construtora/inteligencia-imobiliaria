@@ -62,7 +62,25 @@ def run_ibge_sectors_collector() -> dict[str, int]:
 
             geojson = resp.json()
             features = geojson.get("features", [])
-            logger.info(f"[ibge_sectors] {len(features)} setores recebidos")
+            logger.info(f"[ibge_sectors] {len(features)} feature(s) recebida(s)")
+
+            # A API de malhas do IBGE (v3/v4) NÃO expõe setores censitários: ela
+            # devolve só o contorno do município (1 feature, codarea=3529005).
+            # Gravar isso criava 1 linha placeholder enganosa em census_sectors.
+            # Setores 2022 (polígono + renda) só existem como download do geoftp:
+            #   malhas: https://geoftp.ibge.gov.br/organizacao_do_territorio/malhas_territoriais/
+            #           malhas_de_setores_censitarios__divisoes_intramunicipais/censo_2022/setores/
+            #   renda:  Agregados por Setores Censitários 2022 (CSV, por UF)
+            # A ingestão desses arquivos exige geopandas e roda no ambiente local.
+            if len(features) <= 1:
+                msg = (
+                    f"API de malhas retornou {len(features)} feature (contorno do "
+                    "município, não setores). Setores 2022 exigem ingestão do "
+                    "shapefile do geoftp + Agregados por Setores. Nada gravado."
+                )
+                logger.error(f"[ibge_sectors] {msg}")
+                _finish_run(db, run_id, "failed", stats, msg)
+                return stats
 
             # 2. Tentar buscar dados de renda (pode falhar — não é crítico)
             renda_map: dict[str, float] = {}
