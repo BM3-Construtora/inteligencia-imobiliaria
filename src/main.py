@@ -96,6 +96,7 @@ Comandos:
   embed                  Gera embeddings text-embedding-004 para listings e documentos
   vision-listings        Analisa fotos de anúncios via Gemini Vision (conservation score)
   health-check           Inspeciona agent_runs (24h) e alerta no Telegram se coletor quebrou
+  dom-extract <tab> [n]  Extração LLM de campos sobre snippets do DOM (--dry-run p/ validar)
 """.strip()
 
 
@@ -657,6 +658,17 @@ def main() -> None:
         from src.llm_usage import report_usage
         days = int(args[1]) if len(args) > 1 else 30
         report_usage(days=days)
+    elif command == "dom-extract":
+        from src.dom_extract import run_dom_extract, SPECS
+        if len(args) < 2 or args[1] not in SPECS:
+            raise SystemExit(f"Uso: dom-extract <tabela> [limit] [--dry-run]. Tabelas: {list(SPECS)}")
+        table = args[1]
+        dry = "--dry-run" in args
+        nums = [a for a in args[2:] if a.isdigit()]
+        limit = int(nums[0]) if nums else 50
+        logger.info(f"=== Starting dom-extract {table} (limit={limit}, dry={dry}) ===")
+        s = run_dom_extract(table, limit=limit, dry_run=dry)
+        logger.info(f"=== dom-extract done: {s} ===")
     elif command == "health-check":
         from src.health import run_health_check
         logger.info("=== Starting health-check ===")

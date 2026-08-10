@@ -125,6 +125,17 @@ Pendente na Onda 2 (evolução, não bloqueia): geocode fino de alvarás/EIV (ho
 > loteamentos" no `/radar`. O passe de LLM fica como lever para os nomes/
 > campos dos ~145 restantes cujo decreto não traz o nome entre aspas no
 > snippet.
+>
+> **Passe de LLM construído (2026-08-10):** `src/dom_extract.py` +
+> `dom-extract <tabela> [n] [--dry-run]` — Gemini structured output sobre os
+> snippets do DOM (reusa `llm.py`, telemetria em `llm_usage`). Aplicado ao
+> `parcelamento_solo`: nomes de loteamento subiram de 40 para **143/185** com
+> nomes reais e corretos ("Jardim Botânico I", "Villa Flora Aquarius"…), custo
+> total ~US$0,03.
+> No `plano_diretor_signals` o LLM abstém (retorna null) porque os 15 sinais
+> não nomeiam bairro de rezoneamento — honesto, `radar_upzoning` segue vazio
+> por falta de dado, não de extração. **Alvará/rating**: sem fonte pública;
+> pedido de LAI pronto em `docs/LAI_alvaras_request.md` (única via de destrave).
 
 ---
 
