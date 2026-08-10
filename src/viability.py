@@ -123,6 +123,9 @@ CUSTO_INFRA_PCT = 0.10          # Infraestrutura (água, esgoto, luz, calçada)
 # GO/NO-GO criteria
 MIN_MARGEM_PCT = 15.0
 MAX_PAYBACK_ANOS = 4
+# Teto de investimento por projeto: caixa disponível da BM3.
+# Um projeto que estoura isso não é viável, por melhor que seja a margem.
+MAX_INVESTMENT = float(os.getenv("VIABILITY_MAX_INVESTMENT", "500000"))
 
 
 def _get_sinapi_cost() -> float:
@@ -426,7 +429,14 @@ def simulate_project(
     tir_anual = ((1 + tir_mensal) ** 12 - 1) * 100 if tir_mensal else 0
 
     # --- GO/NO-GO ---
-    is_viable = margem_liquida >= MIN_MARGEM_PCT and payback_anos <= MAX_PAYBACK_ANOS
+    # O teto de investimento entra no is_viable: um projeto acima do caixa da BM3
+    # não é executável, mesmo com margem e payback bons.
+    within_budget = investimento_total <= MAX_INVESTMENT
+    is_viable = (
+        margem_liquida >= MIN_MARGEM_PCT
+        and payback_anos <= MAX_PAYBACK_ANOS
+        and within_budget
+    )
     go_reasons = []
     nogo_reasons = []
 
@@ -440,10 +450,12 @@ def simulate_project(
     else:
         nogo_reasons.append(f"Payback {payback_anos:.1f} anos > {MAX_PAYBACK_ANOS}")
 
-    if investimento_total <= 500000:
+    if within_budget:
         go_reasons.append(f"Investimento R${investimento_total:,.0f} dentro do budget")
     else:
-        nogo_reasons.append(f"Investimento R${investimento_total:,.0f} > R$500k budget")
+        nogo_reasons.append(
+            f"Investimento R${investimento_total:,.0f} > R${MAX_INVESTMENT:,.0f} budget"
+        )
 
     return {
         "scenario": faixa["nome"],
