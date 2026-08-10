@@ -25,7 +25,7 @@ MARILIA_CODE = "3529005"
 # API de malha censitária (GeoJSON com setores censitários)
 IBGE_MESH_URL = (
     f"https://servicodados.ibge.gov.br/api/v3/malhas/municipios/{MARILIA_CODE}"
-    f"?formato=application/vnd.geo+json&resolucao=8&qualidade=4"
+    f"?formato=application/vnd.geo+json&resolucao=5&qualidade=maxima"
 )
 
 # Dados de renda por setor (IBGE Censo 2022 — renda per capita média por setor)

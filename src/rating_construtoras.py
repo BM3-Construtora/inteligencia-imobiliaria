@@ -100,7 +100,7 @@ def _fetch_alvaras_stats(db: Any) -> dict[str, dict]:
     """Agrega alvarás por construtora (requerente)."""
     try:
         result = db.table("alvaras_marilia").select(
-            "requerente, cnpj_cpf, neighborhood, edition_date, area_construida"
+            "requerente, cnpj_cpf, neighborhood, publication_date, area_construida_m2"
         ).not_.is_("requerente", "null").execute()
 
         stats: dict[str, dict] = {}
@@ -122,10 +122,10 @@ def _fetch_alvaras_stats(db: Any) -> dict[str, dict]:
             stats[nome]["total_alvaras"] += 1
             if row.get("neighborhood"):
                 stats[nome]["bairros"].add(row["neighborhood"])
-            if row.get("edition_date"):
-                stats[nome]["datas"].append(row["edition_date"])
-            if row.get("area_construida"):
-                stats[nome]["area_total"] += float(row["area_construida"])
+            if row.get("publication_date"):
+                stats[nome]["datas"].append(row["publication_date"])
+            if row.get("area_construida_m2"):
+                stats[nome]["area_total"] += float(row["area_construida_m2"])
 
         return stats
 
@@ -139,7 +139,7 @@ def _fetch_habite_stats(db: Any) -> dict[str, dict]:
     try:
         # habite_se_records nem sempre tem o requerente — tenta cruzar por processo
         db.table("habite_se_records").select(
-            "neighborhood, edition_date, area_built, source_id"
+            "neighborhood, issue_date, source_id"
         ).execute()
 
         # Sem nome de construtora no habite_se, agrupamos por bairro+período
@@ -155,18 +155,18 @@ def _calculate_prazo_stats(db: Any) -> dict[str, dict]:
     try:
         # Cruzamento: alvaras.numero_processo == habite_se.process_number
         alvaras = db.table("alvaras_marilia").select(
-            "requerente, cnpj_cpf, numero_processo, edition_date"
+            "requerente, cnpj_cpf, numero_processo, publication_date"
         ).not_.is_("numero_processo", "null").not_.is_("requerente", "null").execute()
 
         habites = db.table("habite_se_records").select(
-            "process_number, edition_date"
+            "process_number, issue_date"
         ).not_.is_("process_number", "null").execute()
 
         # Mapear habite_se por processo
         habite_map: dict[str, str] = {
-            h["process_number"]: h["edition_date"]
+            h["process_number"]: h["issue_date"]
             for h in (habites.data or [])
-            if h.get("process_number") and h.get("edition_date")
+            if h.get("process_number") and h.get("issue_date")
         }
 
         # Calcular deltas por construtora
@@ -175,7 +175,7 @@ def _calculate_prazo_stats(db: Any) -> dict[str, dict]:
         for alv in (alvaras.data or []):
             nome = (alv.get("requerente") or "").strip()
             proc = alv.get("numero_processo", "")
-            alv_date = alv.get("edition_date")
+            alv_date = alv.get("publication_date")
 
             if not nome or not proc or not alv_date:
                 continue
