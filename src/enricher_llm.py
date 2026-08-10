@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from postgrest.exceptions import APIError
+
 from src.db import get_client
 from src.llm import extract_listing_attributes, batch_normalize_neighborhoods
 from src.llm import _generate, _parse_json  # type: ignore
@@ -89,9 +91,18 @@ def _normalize_neighborhoods(db: Any, stats: dict[str, int]) -> None:
                     "neighborhood": normalized,
                 }).eq("neighborhood", original).execute()
 
-                db.table("neighborhoods").update({
-                    "name": normalized,
-                }).eq("name", original).execute()
+                try:
+                    db.table("neighborhoods").update({
+                        "name": normalized,
+                    }).eq("name", original).execute()
+                except APIError as e:
+                    # O nome canônico já existe como outra linha: renomear
+                    # violaria a unique (name, city). Os listings já apontam
+                    # pro normalizado, então basta remover a linha duplicada.
+                    if e.code == "23505" or "duplicate key" in str(e):
+                        db.table("neighborhoods").delete().eq("name", original).execute()
+                    else:
+                        raise
 
                 stats["neighborhoods_normalized"] += 1
                 logger.info(f"[llm_enricher] Neighborhood: '{original}' → '{normalized}'")
