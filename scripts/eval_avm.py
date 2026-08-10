@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Experimento A (TCC, Cap. 5): avaliação honesta do AVM contra baseline.
+"""Experimento A (TCC, Cap. 5): avaliação honesta e REPRODUTÍVEL do AVM.
 
-Reproduz o protocolo de produção (src/price_model.py) — mesmos hiperparâmetros,
-target-encoding só no treino — e corrige dois pontos para evitar otimismo:
-  (1) o preço médio por bairro (feature) é construído APENAS sobre o treino
-      (sem vazamento), ao contrário da produção, que o calcula sobre todo o conjunto;
-  (2) reporta média ± desvio sobre múltiplas divisões treino/teste (várias seeds),
-      em vez de um único split, dando uma noção de variância dado o n pequeno.
+Lê o coorte congelado em docs/avm_snapshot.json (gerado por
+scripts/freeze_avm_snapshot.py), de modo que os números do Cap. 5 são
+reproduzíveis para sempre, independentemente da evolução do banco vivo.
 
-Acrescenta o que o pipeline de produção não calcula: baseline de preço/m² do
-bairro, MAPE, RMSE, perda pinball por quantil e cobertura P25–P75 / P10–P90.
+Protocolo (igual ao de produção, com correções contra otimismo):
+  - hold-out aleatório repetido (5 divisões 80/20, seeds fixas);
+  - preço médio por bairro (feature) e target-encoding ajustados SÓ no treino;
+  - baseline = preço/m² mediano do bairro (treino) × área.
+
+Métricas: MAE, MAPE, RMSE, perda pinball (P50 e média dos 5 quantis),
+cobertura P25–P75 / P10–P90, teste de Wilcoxon pareado (erro AVM vs baseline),
+recorte no estrato-alvo (imóveis < R$ 300 mil) e cobertura por Conformalized
+Quantile Regression (CQR) no intervalo de 80%.
 
 Uso:  PYTHONPATH=. python3 scripts/eval_avm.py
 Saída: tabela para o Cap. 5 + JSON em docs/eval_avm_result.json
@@ -17,48 +21,20 @@ Saída: tabela para o Cap. 5 + JSON em docs/eval_avm_result.json
 from __future__ import annotations
 
 import json
+import os
 import statistics
 
 import numpy as np
 import lightgbm as lgb
+from scipy.stats import wilcoxon
 from sklearn.model_selection import train_test_split
 
-from src.db import get_client
-from src.price_model import (
-    QUANTILES,
-    _fetch_agronegocio_indice,
-    _fetch_market_heat,
-    _build_neigh_avg_price_m2,
-    _fetch_obras_map,
-    _fetch_parcelamentos_map,
-    _extract_rows,
-)
-
+QUANTILES = [0.10, 0.25, 0.50, 0.75, 0.90]
 SEEDS = [42, 7, 123, 2024, 99]
-
-
-def _fetch_land_listings(db):
-    """Igual a price_model._fetch_listings, mas sem a coluna
-    mcmv_accessibility_score (ausente nesta base; _extract_rows usa default 50)."""
-    out, page, off = [], 1000, 0
-    while True:
-        r = (
-            db.table("listings")
-            .select("id, sale_price, total_area, price_per_m2, neighborhood, "
-                    "latitude, longitude, is_mcmv, features, first_seen_at")
-            .eq("is_active", True).eq("property_type", "land")
-            .is_("canonical_listing_id", "null")
-            .not_.is_("sale_price", "null").gt("sale_price", 5000)
-            .not_.is_("total_area", "null").gt("total_area", 15)
-            .range(off, off + page - 1).execute()
-        )
-        if not r.data:
-            break
-        out.extend(r.data)
-        if len(r.data) < page:
-            break
-        off += page
-    return out
+SNAPSHOT = "docs/avm_snapshot.json"
+STRATUM_MAX = 300_000       # estrato-alvo: lotes de habitação popular
+SEGMENT_MAX_AREA = 1000.0   # caso de uso: lote residencial urbano (exclui glebas)
+USE_LOG = True              # alvo em log1p (preços têm cauda pesada)
 
 
 def _train_models(X_tr, y_tr):
@@ -75,41 +51,73 @@ def _train_models(X_tr, y_tr):
     return models
 
 
-def _run_split(listings, heat, obras, parcel, seed):
-    tr_l, te_l = train_test_split(listings, test_size=0.2, random_state=seed)
+def _pinball(y, pred, q):
+    u = y - pred
+    return float(np.mean(np.maximum(q * u, (q - 1) * u)))
 
-    # Feature de preço médio do bairro — AJUSTADA SÓ NO TREINO (sem vazamento)
-    neigh_avg = _build_neigh_avg_price_m2(tr_l)
-    Xtr, ytr, _, ntr = _extract_rows(tr_l, neigh_avg, heat, obras, parcel)
-    Xte, yte, _, nte = _extract_rows(te_l, neigh_avg, heat, obras, parcel)
-    if len(yte) < 10 or len(ytr) < 30:
-        return None
 
-    Xtr, ytr = np.array(Xtr, float), np.array(ytr, float)
-    Xte, yte = np.array(Xte, float), np.array(yte, float)
+def _prep(rows):
+    """Monta X (com col1 e target-enc a definir), y, área, bairro, ppm2."""
+    X = np.array([r["x"] for r in rows], dtype=float)
+    y = np.array([r["y"] for r in rows], dtype=float)
+    area = np.array([r["area"] for r in rows], dtype=float)
+    neigh = [r["neigh"] for r in rows]
+    ppm2 = [r["ppm2"] for r in rows]
+    return X, y, area, neigh, ppm2
 
-    # Target-encoding do bairro (treino) + coluna extra
+
+def _encode(Xtr, ytr, ntr, Xte, nte):
+    """col1 = preço médio/m² do bairro (treino); +coluna target-enc (treino)."""
+    # neigh_price (col 1) a partir do ppm2 do treino
+    # (recomputado aqui via média de y/area como proxy estável do ppm2 de treino)
+    # target-encoding: média de y por bairro no treino
     bucket: dict[str, list[float]] = {}
     for nb, pr in zip(ntr, ytr):
         if nb:
             bucket.setdefault(nb, []).append(float(pr))
     enc = {nb: sum(v) / len(v) for nb, v in bucket.items()}
     gmean = float(ytr.mean())
-    Xtr = np.hstack([Xtr, np.array([enc.get(nb, gmean) for nb in ntr]).reshape(-1, 1)])
-    Xte = np.hstack([Xte, np.array([enc.get(nb, gmean) for nb in nte]).reshape(-1, 1)])
+    tr_col = np.array([enc.get(nb, gmean) for nb in ntr]).reshape(-1, 1)
+    te_col = np.array([enc.get(nb, gmean) for nb in nte]).reshape(-1, 1)
+    return np.hstack([Xtr, tr_col]), np.hstack([Xte, te_col])
 
-    models = _train_models(Xtr, ytr)
-    p = {q: models[q].predict(Xte) for q in QUANTILES}
 
-    # Baseline: preço/m² mediano do bairro (treino) × área
+def _neigh_price(ntr, ppm2_tr):
+    bucket: dict[str, list[float]] = {}
+    for nb, p in zip(ntr, ppm2_tr):
+        if nb and p:
+            bucket.setdefault(nb, []).append(float(p))
+    return {nb: sum(v) / len(v) for nb, v in bucket.items()}
+
+
+def _run_split(rows, seed):
+    tr, te = train_test_split(rows, test_size=0.2, random_state=seed)
+    Xtr, ytr, atr, ntr, ptr = _prep(tr)
+    Xte, yte, ate, nte, pte = _prep(te)
+    if len(yte) < 8 or len(ytr) < 30:
+        return None
+
+    # col1 = neigh price/m2 (treino)
+    np_map = _neigh_price(ntr, ptr)
+    Xtr[:, 1] = np.array([np_map.get(nb, 0.0) for nb in ntr])
+    Xte[:, 1] = np.array([np_map.get(nb, 0.0) for nb in nte])
+
+    # target-encoding (treino)
+    Xtr, Xte = _encode(Xtr, ytr, ntr, Xte, nte)
+
+    y_fit = np.log1p(ytr) if USE_LOG else ytr
+    models = _train_models(Xtr, y_fit)
+    inv = (lambda z: np.expm1(z)) if USE_LOG else (lambda z: z)
+    p = {q: inv(models[q].predict(Xte)) for q in QUANTILES}
+
+    # baseline: mediana de y/area por bairro (treino) * área
     pm2: dict[str, list[float]] = {}
     for i, nb in enumerate(ntr):
-        a = Xtr[i][0]
-        if a > 0:
-            pm2.setdefault(nb, []).append(float(ytr[i]) / a)
+        if atr[i] > 0:
+            pm2.setdefault(nb, []).append(float(ytr[i]) / atr[i])
     pm2m = {nb: statistics.median(v) for nb, v in pm2.items()}
-    gpm2 = statistics.median([float(ytr[i]) / Xtr[i][0] for i in range(len(ytr)) if Xtr[i][0] > 0])
-    base = np.array([pm2m.get(nte[i], gpm2) * Xte[i][0] for i in range(len(yte))])
+    gpm2 = statistics.median([ytr[i] / atr[i] for i in range(len(ytr)) if atr[i] > 0])
+    base = np.array([pm2m.get(nte[i], gpm2) * ate[i] for i in range(len(yte))])
 
     def mae(a, b): return float(np.mean(np.abs(a - b)))
     def rmse(a, b): return float(np.sqrt(np.mean((a - b) ** 2)))
@@ -121,58 +129,133 @@ def _run_split(listings, heat, obras, parcel, seed):
         "avm_mae": mae(yte, p[0.50]), "avm_mape": mape(yte, p[0.50]), "avm_rmse": rmse(yte, p[0.50]),
         "cov2575": float(np.mean((yte >= p[0.25]) & (yte <= p[0.75])) * 100),
         "cov1090": float(np.mean((yte >= p[0.10]) & (yte <= p[0.90])) * 100),
+        "pinball_p50_avm": _pinball(yte, p[0.50], 0.50),
+        "pinball_p50_base": _pinball(yte, base, 0.50),
+        "pinball_avg_avm": float(np.mean([_pinball(yte, p[q], q) for q in QUANTILES])),
+        # arrays para pooling (Wilcoxon + estrato)
+        "_y": yte, "_avm": p[0.50], "_base": base,
     }
 
 
 def main() -> None:
-    db = get_client()
-    listings = _fetch_land_listings(db)
-    total_listings = db.table("listings").select("id", count="exact").limit(1).execute().count
-    agro = _fetch_agronegocio_indice(db)
-    for l in listings:
-        l["_agronegocio_indice"] = agro
-    heat = _fetch_market_heat(db)
-    obras = _fetch_obras_map(db)
-    parcel = _fetch_parcelamentos_map(db)
-    itbi = db.table("itbi_transactions").select("id", count="exact").limit(1).execute().count
+    if not os.path.exists(SNAPSHOT):
+        raise SystemExit(f"Snapshot ausente: {SNAPSHOT}. Rode scripts/freeze_avm_snapshot.py")
+    snap = json.load(open(SNAPSHOT))
+    meta = snap["meta"]
+    rows = [r for r in snap["rows"] if r["area"] <= SEGMENT_MAX_AREA]
+    print(f"segmento: lote residencial (área ≤ {SEGMENT_MAX_AREA:.0f} m²) -> "
+          f"{len(rows)} de {len(snap['rows'])}   alvo={'log1p' if USE_LOG else 'linear'}")
 
-    usable = [l for l in listings if (l.get("total_area") or 0) > 0 and (l.get("sale_price") or 0) > 0]
-    geo = sum(1 for l in usable if l.get("latitude") and l.get("longitude"))
-
-    print(f"\n=== CONJUNTO DE DADOS ===")
-    print(f"listings (base total):           {total_listings}")
-    print(f"terrenos ativos com preço/área:  {len(usable)}")
-    print(f"geocodificados:                  {geo} ({100*geo/max(len(usable),1):.1f}%)")
-    print(f"transações ITBI (ground truth):  {itbi}")
-
-    runs = [r for r in (_run_split(listings, heat, obras, parcel, s) for s in SEEDS) if r]
+    runs = [r for r in (_run_split(rows, s) for s in SEEDS) if r]
     if not runs:
-        print("Dados insuficientes."); return
+        raise SystemExit("Dados insuficientes no snapshot.")
+
+    # cobertura conformal: re-medida corretamente no teste usando o qhat do split
+    conf_covs = []
+    for s in SEEDS:
+        c = _measure_cqr_on_test(rows, s)
+        if c is not None:
+            conf_covs.append(c)
 
     def agg(key):
-        vals = [r[key] for r in runs]
-        return statistics.mean(vals), (statistics.stdev(vals) if len(vals) > 1 else 0.0)
+        vals = [r[key] for r in runs if r.get(key) is not None]
+        return (statistics.mean(vals), statistics.stdev(vals) if len(vals) > 1 else 0.0)
 
-    keys = ["base_mae", "base_mape", "base_rmse", "avm_mae", "avm_mape",
-            "avm_rmse", "cov2575", "cov1090"]
+    # pooling para Wilcoxon e estrato
+    y_all = np.concatenate([r["_y"] for r in runs])
+    avm_all = np.concatenate([r["_avm"] for r in runs])
+    base_all = np.concatenate([r["_base"] for r in runs])
+    err_avm = np.abs(y_all - avm_all)
+    err_base = np.abs(y_all - base_all)
+    try:
+        w_stat, w_p = wilcoxon(err_avm, err_base, alternative="less")
+        w_stat, w_p = float(w_stat), float(w_p)
+    except Exception:
+        w_stat, w_p = None, None
+
+    m = y_all < STRATUM_MAX
+    def smape(a, b): return float(np.mean(np.abs((a - b) / a)) * 100)
+    strat = {
+        "n_points": int(m.sum()),
+        "avm_mape": smape(y_all[m], avm_all[m]) if m.any() else None,
+        "base_mape": smape(y_all[m], base_all[m]) if m.any() else None,
+        "avm_mae": float(np.mean(np.abs(y_all[m] - avm_all[m]))) if m.any() else None,
+        "base_mae": float(np.mean(np.abs(y_all[m] - base_all[m]))) if m.any() else None,
+    }
+
+    keys = ["base_mae", "base_mape", "base_rmse", "avm_mae", "avm_mape", "avm_rmse",
+            "cov2575", "cov1090", "pinball_p50_avm", "pinball_p50_base", "pinball_avg_avm"]
     a = {k: agg(k) for k in keys}
-    res = {"n_total": total_listings, "n_usable": len(usable), "geocoded": geo,
-           "geocoded_pct": round(100*geo/len(usable), 1), "itbi": itbi,
-           "seeds": SEEDS, "n_test_avg": round(statistics.mean([r["n_test"] for r in runs])),
-           **{k: {"mean": round(a[k][0], 2), "std": round(a[k][1], 2)} for k in keys}}
+    res = {
+        "source": SNAPSHOT, "n_total_note": "ver Tabela 1", "n_usable": meta["n"],
+        "cutoff": meta.get("cutoff_first_seen_at"), "itbi": 0, "seeds": SEEDS,
+        "n_test_avg": round(statistics.mean([r["n_test"] for r in runs])),
+        **{k: {"mean": round(a[k][0], 4 if "pinball" in k else 2),
+               "std": round(a[k][1], 4 if "pinball" in k else 2)} for k in keys},
+        "wilcoxon": {"stat": w_stat, "p_value": w_p, "alt": "erro_avm < erro_base",
+                     "n_pairs": int(len(err_avm))},
+        "conformal_cov1090": (round(statistics.mean(conf_covs), 2) if conf_covs else None),
+        "stratum_lt_300k": {k: (round(v, 2) if isinstance(v, float) else v)
+                            for k, v in strat.items()},
+    }
 
-    print(f"\n=== EXPERIMENTO A — média ± desvio sobre {len(runs)} divisões (n_teste≈{res['n_test_avg']}) ===")
-    print(f"{'Métrica':<14}{'Baseline':>22}{'AVM (P50)':>22}")
-    print(f"{'MAE (R$)':<14}{a['base_mae'][0]:>14,.0f} ±{a['base_mae'][1]:>6,.0f}{a['avm_mae'][0]:>14,.0f} ±{a['avm_mae'][1]:>6,.0f}")
-    print(f"{'MAPE (%)':<14}{a['base_mape'][0]:>15.1f} ±{a['base_mape'][1]:>5.1f}{a['avm_mape'][0]:>15.1f} ±{a['avm_mape'][1]:>5.1f}")
-    print(f"{'RMSE (R$)':<14}{a['base_rmse'][0]:>14,.0f} ±{a['base_rmse'][1]:>6,.0f}{a['avm_rmse'][0]:>14,.0f} ±{a['avm_rmse'][1]:>6,.0f}")
-    print(f"\n=== COBERTURA (AVM) ===")
-    print(f"  P25–P75 (alvo 50%): {a['cov2575'][0]:.1f}% ± {a['cov2575'][1]:.1f}")
-    print(f"  P10–P90 (alvo 80%): {a['cov1090'][0]:.1f}% ± {a['cov1090'][1]:.1f}")
+    print(f"\n=== EXPERIMENTO A (snapshot congelado, N={meta['n']}, "
+          f"n_teste≈{res['n_test_avg']}, {len(runs)} divisões) ===")
+    print(f"{'Métrica':<16}{'Baseline':>22}{'AVM (P50)':>22}")
+    print(f"{'MAE (R$)':<16}{a['base_mae'][0]:>13,.0f} ±{a['base_mae'][1]:>7,.0f}{a['avm_mae'][0]:>13,.0f} ±{a['avm_mae'][1]:>7,.0f}")
+    print(f"{'MAPE (%)':<16}{a['base_mape'][0]:>14.1f} ±{a['base_mape'][1]:>6.1f}{a['avm_mape'][0]:>14.1f} ±{a['avm_mape'][1]:>6.1f}")
+    print(f"{'RMSE (R$)':<16}{a['base_rmse'][0]:>13,.0f} ±{a['base_rmse'][1]:>7,.0f}{a['avm_rmse'][0]:>13,.0f} ±{a['avm_rmse'][1]:>7,.0f}")
+    print(f"{'Pinball P50':<16}{a['pinball_p50_base'][0]:>21,.0f}{a['pinball_p50_avm'][0]:>22,.0f}")
+    print(f"\nPinball média (5 quantis, AVM): {a['pinball_avg_avm'][0]:,.0f}")
+    print(f"Cobertura P25–P75 (alvo 50%): {a['cov2575'][0]:.1f}% ± {a['cov2575'][1]:.1f}")
+    print(f"Cobertura P10–P90 (alvo 80%): {a['cov1090'][0]:.1f}% ± {a['cov1090'][1]:.1f}")
+    print(f"Cobertura P10–P90 com CQR (alvo 80%): "
+          f"{res['conformal_cov1090']}%" if res['conformal_cov1090'] else "CQR: n/d")
+    print(f"\nWilcoxon (erro AVM < erro baseline): p={w_p:.2e}  (n={len(err_avm)} pares)")
+    print(f"\nEstrato-alvo < R$ 300 mil (n={strat['n_points']}): "
+          f"MAPE AVM {strat['avm_mape']:.1f}% vs baseline {strat['base_mape']:.1f}%; "
+          f"MAE AVM R$ {strat['avm_mae']:,.0f} vs baseline R$ {strat['base_mae']:,.0f}")
 
     with open("docs/eval_avm_result.json", "w") as f:
         json.dump(res, f, indent=2, ensure_ascii=False)
     print("\nOK -> docs/eval_avm_result.json")
+
+
+def _measure_cqr_on_test(rows, seed):
+    """Cobertura empírica do intervalo CQR-80% no conjunto de teste do split."""
+    tr, te = train_test_split(rows, test_size=0.2, random_state=seed)
+    if len(tr) < 40:
+        return None
+    ptr, cal = train_test_split(tr, test_size=0.25, random_state=seed + 1)
+    Xtr, ytr, atr, ntr, pptr = _prep(ptr)
+    Xca, yca, aca, nca, ppca = _prep(cal)
+    Xte, yte, ate, nte, ppte = _prep(te)
+    np_map = _neigh_price(ntr, pptr)
+    for XX, nn in ((Xtr, ntr), (Xca, nca), (Xte, nte)):
+        XX[:, 1] = np.array([np_map.get(nb, 0.0) for nb in nn])
+    # target-enc treino
+    bucket = {}
+    for nb, pr in zip(ntr, ytr):
+        if nb: bucket.setdefault(nb, []).append(float(pr))
+    enc = {nb: sum(v) / len(v) for nb, v in bucket.items()}
+    gm = float(ytr.mean())
+    def addcol(X, nn): return np.hstack([X, np.array([enc.get(nb, gm) for nb in nn]).reshape(-1, 1)])
+    Xtr, Xca, Xte = addcol(Xtr, ntr), addcol(Xca, nca), addcol(Xte, nte)
+    y_fit = np.log1p(ytr) if USE_LOG else ytr
+    inv = (lambda z: np.expm1(z)) if USE_LOG else (lambda z: z)
+    def fit(al):
+        return lgb.LGBMRegressor(objective="quantile", alpha=al, n_estimators=400,
+            learning_rate=0.04, num_leaves=15, max_depth=6, min_data_in_leaf=25,
+            feature_fraction=0.85, bagging_fraction=0.85, bagging_freq=3,
+            reg_alpha=0.1, reg_lambda=0.2, random_state=42, verbosity=-1).fit(Xtr, y_fit)
+    lo, hi = fit(0.10), fit(0.90)
+    qlo_c, qhi_c = inv(lo.predict(Xca)), inv(hi.predict(Xca))
+    scores = np.maximum(qlo_c - yca, yca - qhi_c)
+    n = len(scores)
+    k = min(n - 1, int(np.ceil((n + 1) * 0.80)) - 1)
+    qhat = float(np.sort(scores)[k])
+    qlo_t, qhi_t = inv(lo.predict(Xte)) - qhat, inv(hi.predict(Xte)) + qhat
+    return float(np.mean((yte >= qlo_t) & (yte <= qhi_t)) * 100)
 
 
 if __name__ == "__main__":

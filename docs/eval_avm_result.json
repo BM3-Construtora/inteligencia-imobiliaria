@@ -1,8 +1,8 @@
 {
-  "n_total": 19821,
-  "n_usable": 205,
-  "geocoded": 205,
-  "geocoded_pct": 100.0,
+  "source": "docs/avm_snapshot.json",
+  "n_total_note": "ver Tabela 1",
+  "n_usable": 177,
+  "cutoff": "2026-08",
   "itbi": 0,
   "seeds": [
     42,
@@ -11,37 +11,63 @@
     2024,
     99
   ],
-  "n_test_avg": 41,
+  "n_test_avg": 33,
   "base_mae": {
-    "mean": 1991769.1,
-    "std": 2087022.69
+    "mean": 115969.62,
+    "std": 44873.55
   },
   "base_mape": {
-    "mean": 129.6,
-    "std": 64.03
+    "mean": 50.68,
+    "std": 21.52
   },
   "base_rmse": {
-    "mean": 9233769.86,
-    "std": 10024307.98
+    "mean": 202721.09,
+    "std": 102607.33
   },
   "avm_mae": {
-    "mean": 502336.63,
-    "std": 441842.83
+    "mean": 125575.35,
+    "std": 35736.67
   },
   "avm_mape": {
-    "mean": 81.74,
-    "std": 25.21
+    "mean": 54.62,
+    "std": 11.67
   },
   "avm_rmse": {
-    "mean": 1939979.3,
-    "std": 2112809.15
+    "mean": 203566.89,
+    "std": 79943.56
   },
   "cov2575": {
-    "mean": 43.41,
-    "std": 6.54
+    "mean": 24.85,
+    "std": 6.91
   },
   "cov1090": {
-    "mean": 65.37,
-    "std": 7.79
+    "mean": 50.3,
+    "std": 9.24
+  },
+  "pinball_p50_avm": {
+    "mean": 62787.6772,
+    "std": 17868.3358
+  },
+  "pinball_p50_base": {
+    "mean": 57984.8107,
+    "std": 22436.7751
+  },
+  "pinball_avg_avm": {
+    "mean": 49000.5829,
+    "std": 17539.6606
+  },
+  "wilcoxon": {
+    "stat": 8109.0,
+    "p_value": 0.9799393994232903,
+    "alt": "erro_avm < erro_base",
+    "n_pairs": 165
+  },
+  "conformal_cov1090": 80.0,
+  "stratum_lt_300k": {
+    "n_points": 115,
+    "avm_mape": 61.98,
+    "base_mape": 53.64,
+    "avm_mae": 74503.17,
+    "base_mae": 72643.9
   }
 }
