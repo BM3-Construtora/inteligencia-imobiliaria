@@ -43,16 +43,18 @@ Negativas / riscos aceitos:
    (faz os `git mv` determinísticos e resolve as colisões). Rode quando a branch
    parar de receber migrations de outras sessões, num commit dedicado. Atualize
    também as referências textuais a `sql/NNN_*.sql` em comentários/docstrings.
-2. **Configurar secrets** no repositório (Settings → Secrets → Actions):
-   - `SUPABASE_ACCESS_TOKEN` (token pessoal do CLI)
-   - `SUPABASE_DB_PASSWORD` (senha do banco do projeto)
-   - `SUPABASE_PROJECT_REF` (ref do projeto, ex: `abcxyz…`)
-3. **Baseline** (uma vez, local, com as credenciais): marcar como aplicadas as
-   migrations que já existem em produção, sem re-rodar:
+2. **Configurar o secret** no repositório (Settings → Secrets → Actions):
+   - `SUPABASE_DB_URL` — connection string da conexão **direta** (Project
+     Settings → Database → Connection string → URI, porta 5432; inclui a senha).
+   Usamos `--db-url` em vez de access token porque o Supabase agora força
+   expiração em tokens novos, e um token expirado quebraria o CD. A senha do
+   banco não expira. (Se um dia trocar a senha, atualize este secret.)
+3. **Baseline** (uma vez, local): marcar como aplicadas as migrations que já
+   existem em produção, sem re-rodar. Também via `--db-url` (sem login/token):
    ```
-   supabase link --project-ref <REF>
-   supabase migration list          # veja local vs remoto
-   supabase migration repair --status applied <version> …   # para cada já-aplicada
+   export DBURL='postgresql://postgres:<senha>@db.<ref>.supabase.co:5432/postgres'
+   supabase migration list --db-url "$DBURL"          # veja local vs remoto
+   supabase migration repair --status applied <version> --db-url "$DBURL"  # cada já-aplicada
    ```
    Só as genuinamente novas (ex: RLS hardening, map geojson, bairro_stats) devem
    ficar como pendentes.

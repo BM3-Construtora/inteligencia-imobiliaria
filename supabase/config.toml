@@ -1,8 +1,6 @@
-# Config do Supabase CLI. O project_id abaixo é o ref do projeto; no CI o link
-# é feito via `supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}`,
-# então este valor serve para uso local (supabase link / db push).
-# Substitua pelo ref real do projeto BM3.
-project_id = "your-project-ref"
+# Config do Supabase CLI. project_id = ref do projeto (não é secret, aparece na
+# URL). O CD aplica migrations via SUPABASE_DB_URL (--db-url), não por este link.
+project_id = "yeqzpiwabxbikwuywuhz"
 
 [db]
 # Versão do Postgres do projeto (Supabase usa 15 por padrão; ajuste se diferir).
