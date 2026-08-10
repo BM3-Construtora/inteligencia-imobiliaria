@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet'
 import { useFilteredNeighborhoods } from '../hooks/useFilteredData'
+import { useOpportunityPoints } from '../hooks/useSupabase'
 import { MapLegend } from './MapLegend'
 import type { Neighborhood } from '../types'
 import 'leaflet/dist/leaflet.css'
@@ -50,10 +51,20 @@ function fmt(n: number | null): string {
   return `R$ ${n.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`
 }
 
+// Score alto (boa oportunidade) = verde; score baixo = vermelho.
+function scoreToColor(score: number): string {
+  const t = Math.min(1, Math.max(0, score / 100))
+  const r = Math.round(239 - t * (239 - 34))
+  const g = Math.round(68 + t * (197 - 68))
+  return `rgb(${r}, ${g}, 68)`
+}
+
 export function PropertyMap() {
   const { neighborhoods, loading } = useFilteredNeighborhoods()
+  const { points } = useOpportunityPoints()
   const [view, setView] = useState<MapView>('all')
   const [colorMode, setColorMode] = useState<ColorMode>('price')
+  const [showListings, setShowListings] = useState(false)
 
   const { filtered, minPrice, maxPrice, minRisk, maxRisk } = useMemo(() => {
     const withCoords = neighborhoods.filter(n => n.latitude != null && n.longitude != null)
@@ -87,10 +98,20 @@ export function PropertyMap() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-white font-semibold">Mapa de Bairros — Marilia/SP</h3>
-          <p className="text-xs text-slate-400">{filtered.length} bairros</p>
+          <p className="text-xs text-slate-400">
+            {filtered.length} bairros{showListings ? ` · ${points.length} imoveis` : ''}
+          </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex gap-1">
+          <button
+            onClick={() => setShowListings(v => !v)}
+            className={`px-3 py-1 text-xs rounded-md transition-colors ${
+              showListings ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+            }`}
+          >
+            Imoveis
+          </button>
+          <div className="flex gap-1 border-l border-slate-600 pl-3">
             {([['all', 'Todos'], ['land', 'Terrenos'], ['houses', 'Casas']] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -211,6 +232,42 @@ export function PropertyMap() {
               </CircleMarker>
             )
           })}
+          {showListings && points.map(p => (
+            <CircleMarker
+              key={`opp-${p.id}`}
+              center={[p.latitude, p.longitude]}
+              radius={5}
+              pathOptions={{
+                color: '#0f172a',
+                fillColor: scoreToColor(p.score),
+                fillOpacity: 0.9,
+                weight: 1,
+              }}
+            >
+              <Popup>
+                <div className="text-sm min-w-[180px]">
+                  <p className="font-bold mb-1">
+                    {p.neighborhood || 'Imovel'}{p.is_mcmv ? ' ✅MCMV' : ''}
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mb-1">
+                    <span className="text-gray-500">Score:</span>
+                    <span className="font-medium">{p.score.toFixed(0)}/100</span>
+                    <span className="text-gray-500">Preco:</span>
+                    <span className="font-medium">{fmt(p.sale_price)}</span>
+                    <span className="text-gray-500">Area:</span>
+                    <span className="font-medium">{p.total_area != null ? `${p.total_area.toLocaleString('pt-BR')} m²` : '-'}</span>
+                    <span className="text-gray-500">R$/m²:</span>
+                    <span className="font-medium">{fmt(p.price_per_m2)}</span>
+                  </div>
+                  {p.url && (
+                    <a href={p.url} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs font-medium">
+                      Ver anuncio
+                    </a>
+                  )}
+                </div>
+              </Popup>
+            </CircleMarker>
+          ))}
         </MapContainer>
         <MapLegend
           minPrice={colorMode === 'risk' ? minRisk : colorMode === 'heat' ? 0 : minPrice}

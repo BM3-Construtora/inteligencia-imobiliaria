@@ -53,7 +53,7 @@ Ordenado por valor × esforço. Dado já computado em todos.
 Hoje o mapa mostra bolha de bairro. A oportunidade é torná-lo o produto central,
 empilhando camadas que já existem no PostGIS:
 
-- Pins por imóvel individual (não bolha), cor por score/tier/mispricing, clique abre a ficha. `listings.geom` pronto.
+- ✅ **Pins por imóvel** (incremento 1, feito): toggle "Imóveis" no `PropertyMap` renderiza as oportunidades como pins coloridos por score (verde=bom), popup com preço/área/R$m²/link. Usa o conjunto de oportunidades (limitado) para não travar o Leaflet com ~20k listings. React puro, sem RPC.
 - Choropleth de renda por setor censitário (`census_sectors`). Para MCMV, mapa de renda = mapa de demanda.
 - Score de acessibilidade MCMV como heatmap (proximidade escola/ônibus/UBS = elegibilidade Caixa).
 - POIs + polos econômicos com raios de influência.

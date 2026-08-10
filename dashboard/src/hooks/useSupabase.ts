@@ -202,6 +202,69 @@ export function useMapData() {
   return { neighborhoods, loading }
 }
 
+export interface MapListingPoint {
+  id: number
+  neighborhood: string | null
+  latitude: number
+  longitude: number
+  sale_price: number | null
+  total_area: number | null
+  price_per_m2: number | null
+  url: string | null
+  is_mcmv: boolean
+  market_tier: string | null
+  score: number
+}
+
+// Pins por imóvel no mapa: usa o conjunto de oportunidades (acionável e
+// limitado), com as coordenadas do listing embutido. Evita renderizar os
+// ~20k listings individuais, que travariam o Leaflet.
+export function useOpportunityPoints() {
+  const [points, setPoints] = useState<MapListingPoint[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchPoints() {
+      const rows = await fetchAllRows<{
+        score: number
+        listing:
+          | { id: number; neighborhood: string | null; latitude: number | null; longitude: number | null; sale_price: number | null; total_area: number | null; price_per_m2: number | null; url: string | null; is_mcmv: boolean; market_tier: string | null }
+          | { id: number; neighborhood: string | null; latitude: number | null; longitude: number | null; sale_price: number | null; total_area: number | null; price_per_m2: number | null; url: string | null; is_mcmv: boolean; market_tier: string | null }[]
+          | null
+      }>(
+        (from) => from.select(
+          'score, listing:listings!inner(id, neighborhood, latitude, longitude, sale_price, total_area, price_per_m2, url, is_mcmv, market_tier)',
+        ),
+        'opportunities',
+      )
+
+      const pts: MapListingPoint[] = []
+      for (const r of rows) {
+        const l = Array.isArray(r.listing) ? r.listing[0] : r.listing
+        if (!l || l.latitude == null || l.longitude == null) continue
+        pts.push({
+          id: l.id,
+          neighborhood: l.neighborhood,
+          latitude: l.latitude,
+          longitude: l.longitude,
+          sale_price: l.sale_price,
+          total_area: l.total_area,
+          price_per_m2: l.price_per_m2,
+          url: l.url,
+          is_mcmv: l.is_mcmv,
+          market_tier: l.market_tier,
+          score: r.score,
+        })
+      }
+      setPoints(pts)
+      setLoading(false)
+    }
+    fetchPoints()
+  }, [])
+
+  return { points, loading }
+}
+
 export function useClassificationStats() {
   const [tiers, setTiers] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
