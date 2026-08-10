@@ -103,6 +103,20 @@ Pendente na Onda 2 (evolução, não bloqueia): geocode fino de alvarás/EIV (ho
 > Corrigido no coletor: parser de data (`YYYY-MM-DD HH:MM:SS`) e regex do
 > bloco (não casa mais cabeçalho administrativo) → agora retorna 0 honesto
 > em vez de linhas-lixo.
+>
+> **Achado sistêmico (verificação dos sinais alternativos):** TODOS os
+> coletores do DOM-MAR capturam o sinal (keyword + `snippet`) mas falham na
+> extração de campos estruturados. Estado real em prod: parcelamento_solo
+> 176 linhas (título/área/lotes vazios, só snippet), plano_diretor_signals
+> 15 (bairro/upzoning/data vazios), eiv 5 (requerente/bairro/área vazios),
+> cmdu 1. O texto ESTÁ no snippet (ex.: nome do loteamento em aspas), mas o
+> regex não extrai. Fix robusto = **passe de extração via LLM** (Gemini
+> structured output) sobre os snippets já capturados — uma abordagem conserta
+> todos os coletores DOM, custo baixo (~200 snippets). Regex por coletor
+> seria frágil. Ressalva: área/lotes/requerente muitas vezes nem constam no
+> texto do decreto publicado. Alvo de maior valor: **parcelamento_solo**
+> (loteamentos = futura oferta, sinal público real que existe, ao contrário
+> de alvarás).
 
 ---
 
