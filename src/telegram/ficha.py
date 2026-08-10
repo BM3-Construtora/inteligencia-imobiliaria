@@ -376,6 +376,15 @@ def generate_ficha(query: str) -> str:
                 "method": "radius_quantile",
             }
 
+    # --- 4b) SHAP drivers (só quando há listing casado com predição AVM) ---
+    avm_shap: Optional[str] = None
+    if matched_listing and matched_listing.get("id") and time_left() > 2:
+        try:
+            from src.avm_explain import explain_drivers
+            avm_shap = explain_drivers(int(matched_listing["id"]))
+        except Exception as exc:
+            logger.debug(f"[ficha] avm shap unavailable: {exc}")
+
     # --- 5) Viability (4 faixas) ---
     viability_studies: dict[str, Optional[dict[str, Any]]] = {}
     viability_failed = False
@@ -416,6 +425,7 @@ def generate_ficha(query: str) -> str:
         viability_failed=viability_failed,
         risks=risks,
         construtoras=construtoras,
+        avm_shap=avm_shap,
         matched_listing=matched_listing,
     )
 
@@ -508,6 +518,7 @@ def _render_ficha(
     viability_failed: bool,
     risks: list[str],
     construtoras: list[str],
+    avm_shap: Optional[str],
     matched_listing: Optional[dict[str, Any]],
 ) -> str:
     lines: list[str] = []
@@ -547,6 +558,9 @@ def _render_ficha(
             lines.append("_Sem área informada — não é possível estimar valor total._")
     else:
         lines.append("_AVM indisponível (poucos comps no bairro)._")
+    if avm_shap:
+        lines.append("")
+        lines.append(avm_shap)
     lines.append("")
 
     # Comps

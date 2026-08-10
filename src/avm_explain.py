@@ -40,6 +40,42 @@ def _fmt_brl(v: Optional[float]) -> str:
         return "—"
 
 
+def _build_drivers(row: dict) -> list[str]:
+    """SHAP drivers como linhas markdown (+/- R$ por feature em PT-BR)."""
+    top = row.get("shap_top_features") or []
+    from src.price_model import FEATURE_LABELS_PT  # local import: avoid cycles
+
+    lines: list[str] = []
+    for f in top[:5]:
+        if not isinstance(f, dict):
+            continue
+        name = f.get("feature", "")
+        label = FEATURE_LABELS_PT.get(name, name)
+        try:
+            c = float(f.get("contribution"))
+        except (TypeError, ValueError):
+            continue
+        if c == 0:
+            continue
+        sign = "+" if c > 0 else "-"
+        lines.append(f"• {sign}{_fmt_brl(abs(c))} {label}")
+    return lines
+
+
+def explain_drivers(listing_id: int) -> Optional[str]:
+    """Bloco 'por que esse valor' (SHAP) para embutir em outra resposta.
+
+    Retorna None quando não há predição ou drivers para o imóvel.
+    """
+    row = _fetch(listing_id)
+    if not row:
+        return None
+    lines = _build_drivers(row)
+    if not lines:
+        return None
+    return "*📊 Por que esse valor:*\n" + "\n".join(lines)
+
+
 def explain_for_telegram(listing_id: int) -> str:
     """Markdown-formatted AVM card for Telegram."""
     row = _fetch(listing_id)
@@ -53,24 +89,7 @@ def explain_for_telegram(listing_id: int) -> str:
     confidence = row.get("confidence")
     conf_str = f"{int(round(float(confidence) * 100))}%" if confidence is not None else "—"
 
-    top = row.get("shap_top_features") or []
-    drivers_lines = []
-    from src.price_model import FEATURE_LABELS_PT  # local import: avoid cycles
-    for f in top[:5]:
-        if not isinstance(f, dict):
-            continue
-        name = f.get("feature", "")
-        label = FEATURE_LABELS_PT.get(name, name)
-        contrib = f.get("contribution")
-        try:
-            c = float(contrib)
-        except (TypeError, ValueError):
-            continue
-        if c == 0:
-            continue
-        sign = "+" if c > 0 else "-"
-        drivers_lines.append(f"• {sign}{_fmt_brl(abs(c))} {label}")
-
+    drivers_lines = _build_drivers(row)
     drivers_block = "\n".join(drivers_lines) if drivers_lines else "• _sem drivers disponíveis_"
 
     return (

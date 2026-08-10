@@ -33,6 +33,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Sou seu assistente para decisoes de construcao em Marilia-SP.\n\n"
         "*Comandos:*\n"
         "/top — Top 10 oportunidades de terrenos\n"
+        "/subprecificados — Imoveis com pedido abaixo do valor justo (AVM)\n"
         "/bairro <nome> — Analise completa de um bairro\n"
         "/construtora <nome> — Rating de uma construtora (obras, prazo, risco)\n"
         "/viabilidade <preco> <area> — Simular projeto MCMV\n"
@@ -69,6 +70,22 @@ async def cmd_bairro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     from src.telegram.queries import get_neighborhood_analysis
     text = get_neighborhood_analysis(name)
     await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def cmd_subprecificados(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Listings whose asking price is below the AVM fair value (P25)."""
+    limit = 10
+    if context.args:
+        try:
+            limit = max(1, min(25, int(context.args[0])))
+        except ValueError:
+            pass
+
+    await update.message.reply_text("Buscando imoveis subprecificados...")
+    from src.telegram.queries import get_undervalued_text
+    text = get_undervalued_text(limit)
+    for chunk in _split_message(text):
+        await update.message.reply_text(chunk, parse_mode="Markdown", disable_web_page_preview=True)
 
 
 async def cmd_construtora(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -183,6 +200,7 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("top", cmd_top))
+    app.add_handler(CommandHandler("subprecificados", cmd_subprecificados))
     app.add_handler(CommandHandler("bairro", cmd_bairro))
     app.add_handler(CommandHandler("construtora", cmd_construtora))
     app.add_handler(CommandHandler("viabilidade", cmd_viabilidade))

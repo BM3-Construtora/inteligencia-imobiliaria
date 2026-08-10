@@ -11,6 +11,13 @@ from src.viability import simulate_project, MCMV_FAIXAS
 _TIER_EMOJI = {"A": "🟢", "B": "🟡", "C": "🟠", "D": "🔴"}
 
 
+def _brl(v: Any) -> str:
+    try:
+        return f"R$ {float(v or 0):,.0f}".replace(",", ".")
+    except (TypeError, ValueError):
+        return "—"
+
+
 def get_top_opportunities(limit: int = 10) -> str:
     """Get top scored opportunities formatted for Telegram."""
     db = get_client()
@@ -121,6 +128,56 @@ def get_neighborhood_analysis(name: str) -> str:
             price = f"R$ {float(l.get('sale_price') or 0):,.0f}"
             lines.append(f"  Score {o['score']:.0f} — {price}")
 
+    return "\n".join(lines)
+
+
+def get_undervalued_text(limit: int = 10) -> str:
+    """Imóveis subprecificados pelo AVM (pedido abaixo do P25). Para /subprecificados."""
+    db = get_client()
+    try:
+        result = (
+            db.table("avm_predictions")
+            .select(
+                "listing_id, actual_price, p25, p50, mispricing_pct, shap_summary, "
+                "listing:listings!inner(neighborhood, total_area, url, is_active)"
+            )
+            .eq("is_undervalued", True)
+            .order("mispricing_pct", desc=True)
+            .limit(limit * 3)
+            .execute()
+        )
+    except Exception:
+        return "Avaliação de subprecificados indisponível no momento."
+
+    lines = [f"🔽 *Top {limit} subprecificados* (pedido abaixo do P25 do AVM)\n"]
+    shown = 0
+    for r in result.data or []:
+        l = r.get("listing")
+        if isinstance(l, list):
+            l = l[0] if l else {}
+        if not l or not l.get("is_active"):
+            continue
+
+        misp = float(r.get("mispricing_pct") or 0)
+        neigh = l.get("neighborhood") or "?"
+        area = l.get("total_area")
+        area_s = f"{float(area):,.0f}m²".replace(",", ".") if area else "?"
+        url = l.get("url") or ""
+
+        shown += 1
+        lines.append(f"{shown}. *{neigh}* — {area_s} | 🔽 {misp:.0f}% abaixo do justo")
+        lines.append(f"   Pedido {_brl(r.get('actual_price'))} vs justo P50 {_brl(r.get('p50'))}")
+        summ = (r.get("shap_summary") or "").strip()
+        if summ:
+            lines.append(f"   _{summ[:140]}_")
+        if url:
+            lines.append(f"   {url}")
+        lines.append("")
+        if shown >= limit:
+            break
+
+    if shown == 0:
+        return "Nenhum imóvel subprecificado agora (nenhum pedido abaixo do P25 do AVM)."
     return "\n".join(lines)
 
 
