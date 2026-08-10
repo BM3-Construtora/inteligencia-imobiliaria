@@ -65,10 +65,11 @@ function scoreToColor(score: number): string {
   return `rgb(${r}, ${g}, 68)`
 }
 
-// Choropleth de renda: sequencial roxo (baixa) → amarelo (alta).
-function rendaToColor(renda: number | null, min: number, max: number): string {
-  if (renda == null || max === min) return '#475569'
-  const t = Math.min(1, Math.max(0, (renda - min) / (max - min)))
+// Choropleth de densidade populacional (proxy de demanda; renda por setor não
+// foi publicada no Censo 2022): sequencial roxo (baixa) → amarelo (alta).
+function densToColor(value: number | null, min: number, max: number): string {
+  if (value == null || max === min) return '#475569'
+  const t = Math.min(1, Math.max(0, (value - min) / (max - min)))
   const r = Math.round(68 + t * (250 - 68))
   const g = Math.round(51 + t * (204 - 51))
   const b = Math.round(122 - t * (122 - 21))
@@ -87,16 +88,16 @@ export function PropertyMap() {
   const [colorMode, setColorMode] = useState<ColorMode>('price')
   const [showListings, setShowListings] = useState(false)
   const [pinColor, setPinColor] = useState<PinColor>('score')
-  const [showRenda, setShowRenda] = useState(false)
+  const [showDensidade, setShowDensidade] = useState(false)
   const [showPolos, setShowPolos] = useState(false)
   const [showApp, setShowApp] = useState(false)
   const [showConcorrencia, setShowConcorrencia] = useState(false)
 
-  const { rendaMin, rendaMax } = useMemo(() => {
-    const rs = sectors.map(s => s.renda_per_capita).filter((r): r is number => r != null)
+  const { densMin, densMax } = useMemo(() => {
+    const ds = sectors.map(s => s.densidade_demo).filter((d): d is number => d != null)
     return {
-      rendaMin: rs.length ? Math.min(...rs) : 0,
-      rendaMax: rs.length ? Math.max(...rs) : 1,
+      densMin: ds.length ? Math.min(...ds) : 0,
+      densMax: ds.length ? Math.max(...ds) : 1,
     }
   }, [sectors])
 
@@ -185,7 +186,7 @@ export function PropertyMap() {
         <span className="text-xs text-slate-500 mr-1">Camadas:</span>
         {([
           ['Imoveis', showListings, () => setShowListings(v => !v)],
-          ['Renda', showRenda, () => setShowRenda(v => !v)],
+          ['Densidade', showDensidade, () => setShowDensidade(v => !v)],
           ['Polos', showPolos, () => setShowPolos(v => !v)],
           ['APP', showApp, () => setShowApp(v => !v)],
           ['Concorrencia', showConcorrencia, () => setShowConcorrencia(v => !v)],
@@ -295,13 +296,13 @@ export function PropertyMap() {
               </CircleMarker>
             )
           })}
-          {/* Choropleth de renda por setor censitário */}
-          {showRenda && sectors.map(s => (
+          {/* Choropleth de densidade populacional por setor censitário */}
+          {showDensidade && sectors.map(s => (
             <GeoJSON
               key={`census-${s.sector_code}`}
               data={s.geometry}
               style={{
-                fillColor: rendaToColor(s.renda_per_capita, rendaMin, rendaMax),
+                fillColor: densToColor(s.densidade_demo, densMin, densMax),
                 fillOpacity: 0.45,
                 color: '#1e293b',
                 weight: 0.5,

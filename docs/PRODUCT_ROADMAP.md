@@ -79,7 +79,7 @@ empilhando camadas que já existem no PostGIS:
 O `PropertyMap` agora tem uma barra de camadas toggleáveis:
 
 - ✅ **Pins por imóvel** (incremento 1): oportunidades como pins coloridos por score (verde=bom), com sub-toggle de cor **score ↔ acessibilidade MCMV**; popup com preço/área/R$m²/link. Usa o conjunto de oportunidades (limitado) para não travar o Leaflet com ~20k listings.
-- ✅ **Choropleth de renda** por setor censitário (`census_sectors`): camada "Renda" via RPC GeoJSON. Para MCMV, mapa de renda = mapa de demanda.
+- ✅ **Choropleth de densidade** por setor censitário (`census_sectors`): camada "Densidade" via RPC GeoJSON. Ingestão real do Censo 2022 (566 setores de Marília do GeoPackage IBGE + população/domicílios do Agregados básico); densidade = pop/km² como proxy de demanda MCMV. **Renda por setor não foi publicada no Censo 2022** — por isso densidade, não renda. Coletor `ibge_sectors` reescrito (gpkg+CSV cacheados, idempotente).
 - ✅ **Acessibilidade MCMV**: sub-modo de cor dos pins (proximidade escola/ônibus/UBS = elegibilidade Caixa), lendo `mcmv_accessibility_score`.
 - ✅ **Polos econômicos** com raio de influência (`economic_centroids`): camada "Polos".
 - ✅ **Overlay de APP/cursos d'água** (`WATER_COURSES` espelhado em `dashboard/src/data/waterCourses.ts`): camada "APP", alerta de restrição construtiva.
