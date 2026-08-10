@@ -81,13 +81,14 @@ def _safe_int(val: Any) -> Optional[int]:
 def _calc_price_per_m2(
     price: Optional[float], area: Optional[float]
 ) -> Optional[float]:
+    # Só calcula; NÃO filtra por plausibilidade. Antes, um ppm2 absurdo (erro
+    # grosseiro de parse) era anulado para None aqui e escapava da quarentena em
+    # _validate_listing, virando NULL silencioso sem registro em data_quality_log.
+    # A quarentena é responsabilidade única de _validate_listing (ppm2_too_low /
+    # ppm2_too_high), que marca quarantined=True e loga — outlier auditável, não
+    # invisível. Consumidores (hunter) já excluem quarantined.
     if price and area and area > 0:
-        result = round(price / area, 2)
-        # Sanity check: R$0.01-50000/m² is plausible for Marília
-        # Anything outside this range is likely bad data
-        if result < 0.01 or result > 50000:
-            return None
-        return result
+        return round(price / area, 2)
     return None
 
 

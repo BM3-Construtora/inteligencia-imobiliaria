@@ -136,15 +136,40 @@ def test_built_area_greater_than_total_swaps():
     assert out["built_area"] == 60
 
 
-def test_calc_price_per_m2_bounds():
-    # In-range
+def test_calc_price_per_m2_only_computes():
+    """_calc só calcula; plausibilidade é responsabilidade de _validate_listing.
+
+    Antes, valores absurdos viravam None aqui e escapavam da quarentena. Agora o
+    valor é calculado e a quarentena o captura (ver test abaixo).
+    """
     assert _calc_price_per_m2(200_000, 200) == 1000.0
-    # area=0 → None
-    assert _calc_price_per_m2(100_000, 0) is None
-    # absurdly low → None
-    assert _calc_price_per_m2(1, 1_000_000) is None
-    # absurdly high → None
-    assert _calc_price_per_m2(100_000_000, 1) is None
-    # None inputs
+    assert _calc_price_per_m2(100_000, 0) is None   # área 0 → sem cálculo
     assert _calc_price_per_m2(None, 100) is None
     assert _calc_price_per_m2(100, None) is None
+    # Valores implausíveis NÃO são mais anulados silenciosamente:
+    assert _calc_price_per_m2(100_000_000, 1) == 100_000_000.0  # ppm2 altíssimo
+    assert _calc_price_per_m2(1, 1_000_000) == 0.0              # ppm2 irrisório
+
+
+def test_absurd_ppm2_is_quarantined_not_silenced():
+    """Um ppm2 absurdamente alto deve ser quarentenado (auditável), não virar NULL."""
+    # preço abaixo do teto de price_too_high (50M) mas área minúscula → ppm2 alto
+    high = _validate_listing({
+        "property_type": "land",
+        "sale_price": 1_000_000,
+        "total_area": 1,
+        "price_per_m2": _calc_price_per_m2(1_000_000, 1),
+    })
+    assert high is not None
+    assert high["quarantined"] is True
+    assert high["quarantine_reason"] == "ppm2_too_high"
+
+    low = _validate_listing({
+        "property_type": "land",
+        "sale_price": 1,
+        "total_area": 1_000_000,
+        "price_per_m2": _calc_price_per_m2(1, 1_000_000),
+    })
+    assert low is not None
+    assert low["quarantined"] is True
+    assert low["quarantine_reason"] == "ppm2_too_low"
