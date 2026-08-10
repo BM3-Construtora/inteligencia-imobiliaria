@@ -504,16 +504,34 @@ def run_normalizer() -> dict[str, int]:
             normalized_batch = []
             raw_ids = []
             processed_raw_ids: list[int] = []
+            # Linhas que falharam (source desconhecida ou exceção de parse). São
+            # marcadas como processed no fim para garantir que a ingestão avança:
+            # normalização é determinística in-memory, então uma linha que falha
+            # vai falhar de novo — deixá-la voltar ao topo travaria o pipeline
+            # inteiro (poison-pill). A falha fica registrada em data_quality_log.
+            failed_raw_ids: list[int] = []
             now = datetime.now(timezone.utc).isoformat()
 
             for raw_row in batch.data:
+                raw_id = raw_row.get("id")
                 try:
                     source = raw_row["source"]
-                    raw_id = raw_row["id"]
                     src_id = raw_row.get("source_id")
                     normalizer_fn = NORMALIZERS.get(source)
                     if not normalizer_fn:
+                        # Source sem normalizer (typo, scraper novo): registra e
+                        # marca como processed em vez de travar a ingestão.
                         stats["failed"] += 1
+                        logger.warning(
+                            f"[normalizer] Unknown source '{source}' "
+                            f"(raw_id={raw_id}) — sem normalizer, pulando"
+                        )
+                        _log_quality(
+                            db, raw_id, source, src_id, "reject",
+                            "unknown_source", {"source": source},
+                        )
+                        if raw_id is not None:
+                            processed_raw_ids.append(raw_id)
                         continue
 
                     normalized = normalizer_fn(raw_row["raw_data"])
@@ -558,19 +576,32 @@ def run_normalizer() -> dict[str, int]:
                         f"[normalizer] Failed to normalize "
                         f"{raw_row.get('source')}:{raw_row.get('source_id')}"
                     )
+                    if raw_id is not None:
+                        failed_raw_ids.append(raw_id)
+                        try:
+                            _log_quality(
+                                db, raw_id, raw_row.get("source"),
+                                raw_row.get("source_id"), "reject",
+                                "normalize_exception", {},
+                            )
+                        except Exception:
+                            logger.exception("[normalizer] Failed to log quality for exception")
 
-            # Mark rejected raw_listings as processed too (don't reprocess)
-            if processed_raw_ids:
+            # Marca rejeitados/desconhecidos/falhos como processed (não reprocessar).
+            # Inclui failed_raw_ids para garantir progresso mesmo em batch 100% ruim.
+            to_mark = processed_raw_ids + failed_raw_ids
+            if to_mark:
                 try:
                     db.table("raw_listings").update({
                         "processed": True,
-                    }).in_("id", processed_raw_ids).execute()
+                    }).in_("id", to_mark).execute()
                 except Exception:
                     logger.exception("[normalizer] Failed to mark rejected as processed")
 
             if not normalized_batch:
-                if stats["failed"] > 0 and not processed_raw_ids:
-                    break
+                # Todo o batch foi rejeitado/falhou, mas já marcamos progresso
+                # acima, então o próximo batch será diferente. Sem break: uma leva
+                # de dados ruins não pode congelar a ingestão inteira.
                 continue
 
             # Phase 1b: Batched lookup grouped by source (collapses N queries → ~6)
