@@ -42,13 +42,15 @@ def run_analyst() -> dict[str, int]:
                 _upsert_snapshot(db, snapshot)
                 stats["snapshots"] += 1
 
-        # 2. Market snapshots by property_type + neighborhood (land only for now)
-        neighborhoods = _get_active_neighborhoods(db, "land")
-        for neigh in neighborhoods:
-            snapshot = _calc_snapshot(db, "land", neigh)
-            if snapshot:
-                _upsert_snapshot(db, snapshot)
-                stats["snapshots"] += 1
+        # 2. Market snapshots by property_type + neighborhood.
+        # Terreno, casa e apê: alimenta a tendência de preço por bairro no painel.
+        for snap_type in ("land", "house", "apartment"):
+            neighborhoods = _get_active_neighborhoods(db, snap_type)
+            for neigh in neighborhoods:
+                snapshot = _calc_snapshot(db, snap_type, neigh)
+                if snapshot:
+                    _upsert_snapshot(db, snapshot)
+                    stats["snapshots"] += 1
 
         # 3. Overall snapshot (all types)
         snapshot = _calc_snapshot(db, None, None)

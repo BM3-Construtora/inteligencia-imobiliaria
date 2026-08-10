@@ -278,8 +278,26 @@ jobs:
           max_attempts: 2
           command: python -m src.main comps
 
+  price-model:
+    needs: hunt
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 18
+          max_attempts: 2
+          command: python -m src.main price-model
+
   notify:
-    needs: [hunt, viability, comps]
+    needs: [hunt, viability, comps, price-model]
     if: ${{ always() && needs.hunt.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -298,7 +316,7 @@ jobs:
           command: python -m src.main notify
 
   summary:
-    needs: [collect, normalize, classify, dedup, enrich, analyst, trends, heat, hunt, score-llm, risk, viability, comps, notify]
+    needs: [collect, normalize, classify, dedup, enrich, analyst, trends, heat, hunt, score-llm, risk, viability, comps, price-model, notify]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -324,6 +342,7 @@ jobs:
             echo "| risk       | ${{ needs.risk.result }} |"
             echo "| viability  | ${{ needs.viability.result }} |"
             echo "| comps      | ${{ needs.comps.result }} |"
+            echo "| price-model| ${{ needs.price-model.result }} |"
             echo "| notify     | ${{ needs.notify.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"

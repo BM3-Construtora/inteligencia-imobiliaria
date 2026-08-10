@@ -12,7 +12,7 @@ Outputs:
 - Patches `opportunities.score_breakdown` with predicted_price + price_diff_pct
 - Logs `agent_runs` entry
 
-Schema: sql/023_avm_predictions.sql
+Schema: supabase/migrations/*_avm_predictions.sql
 """
 
 from __future__ import annotations
@@ -499,6 +499,24 @@ def _run_lgbm(
     idx_tr, idx_te = train_test_split(idx_all, test_size=0.2, random_state=42)
     w_tr = w_arr[idx_tr]
 
+    # --- Fix leakage: neigh_avg_price_m2 (col 1) recomputado só no treino ---
+    # Antes a média de preço/m² por bairro vinha de TODOS os listings
+    # (treino+teste), vazando o alvo via média do bairro e inflando MAE/coverage.
+    # Recomputa a partir das linhas de treino (ppm2 = preço/área) e reescreve a
+    # coluna para todas as linhas; teste passa a usar a média treino-only do seu
+    # bairro, exatamente como já é feito para neigh_target_enc abaixo.
+    _NEIGH_PRICE_COL = 1
+    _train_ppm2: dict[str, list[float]] = {}
+    for i in idx_tr:
+        _a = X_arr[i, 0]
+        if _a > 0:
+            _train_ppm2.setdefault(neighs[i], []).append(y_arr[i] / _a)
+    _neigh_avg_tr = {nbr: sum(v) / len(v) for nbr, v in _train_ppm2.items()}
+    _all_tr_ppm2 = [p for v in _train_ppm2.values() for p in v]
+    _global_ppm2 = float(sum(_all_tr_ppm2) / len(_all_tr_ppm2)) if _all_tr_ppm2 else 0.0
+    for i in range(n):
+        X_arr[i, _NEIGH_PRICE_COL] = _neigh_avg_tr.get(neighs[i], _global_ppm2)
+
     # --- Target-encoding (fit on TRAIN only — avoid leakage) ---
     tr_neighs = [neighs[i] for i in idx_tr]
     tr_y = y_arr[idx_tr]
@@ -687,6 +705,10 @@ def _run_rf_fallback(
         logger.warning("[price_model] sklearn missing — skipping")
         return stats
 
+    # Fallback in-sample: sem holdout, treina e prediz no mesmo X. As faixas
+    # aqui são aproximadas (±10%/±20%) e as métricas seriam otimistas por
+    # construção — usado só quando lightgbm falta. O caminho LGBM (produção)
+    # tem split honesto e correção de leakage; aqui não recalculamos.
     neigh_avg = _build_neigh_avg_price_m2(listings)
     obras_map = _fetch_obras_map(db)
     parcelamentos_map = _fetch_parcelamentos_map(db)

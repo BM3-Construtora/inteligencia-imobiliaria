@@ -1,0 +1,54 @@
+name: Deploy Migrations (CD)
+
+# Aplica migrations pendentes em produção quando chegam na main.
+# Usa a connection string do banco (SUPABASE_DB_URL), não access token — assim
+# o CD não quebra quando um token pessoal expira (o Supabase force expiração em
+# tokens novos). A senha do banco não expira.
+#
+# Pré-requisitos (ver docs/adr/0001-cd-migrations-supabase-cli.md):
+#   1. migrations em supabase/migrations/ (feito)
+#   2. secret SUPABASE_DB_URL (Project Settings > Database > Connection string,
+#      URI da conexão DIRETA, porta 5432 — inclui a senha)
+#   3. baseline feito (supabase migration repair --db-url ...) — senão o push
+#      tentaria reaplicar tudo.
+# Antes disso, o guard abaixo faz o job sair limpo sem tocar o banco.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — só segue se houver migrations e o secret
+        id: guard
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ ! -d supabase/migrations ] || [ -z "$(ls -A supabase/migrations 2>/dev/null)" ]; then
+            echo "Sem supabase/migrations/ ainda. Saindo limpo."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL não configurado — CD inativo. Saindo limpo."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Supabase CLI
+        if: steps.guard.outputs.ready == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Push pending migrations
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: supabase db push --db-url "$SUPABASE_DB_URL"

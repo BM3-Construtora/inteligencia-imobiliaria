@@ -89,6 +89,14 @@ RE_TIPO = re.compile(
     r"\b(loteamento|desmembramento|parcelamento|subdivis[ãa]o)\b",
     re.IGNORECASE,
 )
+# Nome do empreendimento entre aspas após "loteamento/desmembramento", ex.:
+#   Aprova o loteamento de interesse social "TERRAS DE SÃO PAULO V"
+# Aceita aspas retas e curvas (o DOM usa “ ”).
+RE_NOME_EMPREENDIMENTO = re.compile(
+    r"(?:loteamento|desmembramento|empreendimento)[^\"“”]{0,80}?[\"“]([^\"“”]{3,90})[\"”]",
+    re.IGNORECASE,
+)
+RE_INTERESSE_SOCIAL = re.compile(r"interesse\s+social", re.IGNORECASE)
 
 
 def run_collector() -> dict[str, int]:
@@ -184,7 +192,7 @@ def _parse_edition_date(ed: dict[str, Any]) -> date | None:
     raw = ed.get("data") or ed.get("date") or ed.get("publicacao") or ""
     if not raw:
         return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d", "%d/%m/%Y"):
         try:
             return datetime.strptime(str(raw)[:19], fmt).date()
         except ValueError:
@@ -222,6 +230,16 @@ def _extract_parcelamentos(
         tipo_m = RE_TIPO.search(m.group(0))
         tipo = tipo_m.group(1).lower() if tipo_m else "parcelamento"
 
+        # Nome do empreendimento (entre aspas). Tenta no bloco casado; se não,
+        # amplia para o snippet (janela maior).
+        nome_m = RE_NOME_EMPREENDIMENTO.search(m.group(0)) or RE_NOME_EMPREENDIMENTO.search(snippet)
+        titulo = nome_m.group(1).strip() if nome_m else None
+        # Descarta descritores minúsculos (ex.: "permissão de uso"): nome de
+        # loteamento é nome próprio, tem ao menos uma inicial maiúscula.
+        if titulo and titulo == titulo.lower():
+            titulo = None
+        interesse_social = bool(RE_INTERESSE_SOCIAL.search(snippet))
+
         # source_id: processo se disponível, senão hash do snippet
         if proc:
             normalized = re.sub(r"[^\d]", "", proc)
@@ -238,6 +256,8 @@ def _extract_parcelamentos(
             "issue_date": issue_date.isoformat() if issue_date else None,
             "process_number": proc,
             "tipo": tipo,
+            "titulo": titulo,
+            "interesse_social": interesse_social,
             "neighborhood": neighborhood.strip() if neighborhood else None,
             "address": address,
             "area_total_m2": area_total,
@@ -295,6 +315,7 @@ def _to_row(rec: dict[str, Any]) -> dict[str, Any]:
         "issue_date": rec.get("issue_date"),
         "process_number": rec.get("process_number"),
         "tipo": rec.get("tipo"),
+        "titulo": rec.get("titulo"),
         "neighborhood": rec.get("neighborhood"),
         "address": rec.get("address"),
         "area_total_m2": rec.get("area_total_m2"),

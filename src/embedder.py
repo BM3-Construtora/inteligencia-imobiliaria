@@ -4,7 +4,7 @@ Preenche:
   - listing_embeddings (busca de similares, clustering)
   - document_embeddings (RAG de CMDU atas, alvarás, EIVs, Plano Diretor)
 
-Criado por sql/047_pgvector.sql.
+Criado por supabase/migrations/*_pgvector.sql.
 """
 
 from __future__ import annotations

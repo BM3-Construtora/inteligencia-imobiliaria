@@ -79,7 +79,7 @@ empilhando camadas que já existem no PostGIS:
 O `PropertyMap` agora tem uma barra de camadas toggleáveis:
 
 - ✅ **Pins por imóvel** (incremento 1): oportunidades como pins coloridos por score (verde=bom), com sub-toggle de cor **score ↔ acessibilidade MCMV**; popup com preço/área/R$m²/link. Usa o conjunto de oportunidades (limitado) para não travar o Leaflet com ~20k listings.
-- ✅ **Choropleth de renda** por setor censitário (`census_sectors`): camada "Renda" via RPC GeoJSON. Para MCMV, mapa de renda = mapa de demanda.
+- ✅ **Choropleth de densidade** por setor censitário (`census_sectors`): camada "Densidade" via RPC GeoJSON. Ingestão real do Censo 2022 (566 setores de Marília do GeoPackage IBGE + população/domicílios do Agregados básico); densidade = pop/km² como proxy de demanda MCMV. **Renda por setor não foi publicada no Censo 2022** — por isso densidade, não renda. Coletor `ibge_sectors` reescrito (gpkg+CSV cacheados, idempotente).
 - ✅ **Acessibilidade MCMV**: sub-modo de cor dos pins (proximidade escola/ônibus/UBS = elegibilidade Caixa), lendo `mcmv_accessibility_score`.
 - ✅ **Polos econômicos** com raio de influência (`economic_centroids`): camada "Polos".
 - ✅ **Overlay de APP/cursos d'água** (`WATER_COURSES` espelhado em `dashboard/src/data/waterCourses.ts`): camada "APP", alerta de restrição construtiva.
@@ -88,6 +88,54 @@ O `PropertyMap` agora tem uma barra de camadas toggleáveis:
 **Pré-requisito técnico resolvido:** o front acessava Supabase direto sem RPC de geometria. Migration `sql/052_map_geojson.sql` adiciona `census_sectors_geojson()` e `economic_centroids_geojson()` (SECURITY DEFINER, GRANT anon). **Precisa ser aplicada no Supabase** para as camadas Renda/Polos carregarem.
 
 Pendente na Onda 2 (evolução, não bloqueia): geocode fino de alvarás/EIV (hoje no centroide do bairro); `send_location`/static map no bot; POIs individuais no mapa.
+
+> ## ⚠️ Achado de fonte (2026-08-10): alvarás de construção não estão no DOM-MAR dados-abertos
+> Ao rodar `alvara_marilia` ponta a ponta pela 1ª vez: a API
+> `dados-abertos/diario-oficial` **não publica registros estruturados de
+> alvará de aprovação/construção**. Em 2024-2026, "alvará de aprovação/
+> construção" = 0 ocorrências; "requerente" aparece só em contextos
+> administrativos não-construtivos. Os 2 "alvarás" antes coletados eram
+> falso-positivo em "Divisão de Aprovação de Projetos" (cabeçalho).
+> **Impacto:** `/construtora` (rating depende de alvarás) e metade do
+> `/radar` não têm fonte de dados — não é bug de parser. O sinal do moat
+> ("alvará 18-36 meses antes") exige achar a fonte real (sistema de
+> licenciamento municipal, SEPLAN, ou PDF do DOM não exposto neste JSON).
+> Corrigido no coletor: parser de data (`YYYY-MM-DD HH:MM:SS`) e regex do
+> bloco (não casa mais cabeçalho administrativo) → agora retorna 0 honesto
+> em vez de linhas-lixo.
+>
+> **Achado sistêmico (verificação dos sinais alternativos):** TODOS os
+> coletores do DOM-MAR capturam o sinal (keyword + `snippet`) mas falham na
+> extração de campos estruturados. Estado real em prod: parcelamento_solo
+> 176 linhas (título/área/lotes vazios, só snippet), plano_diretor_signals
+> 15 (bairro/upzoning/data vazios), eiv 5 (requerente/bairro/área vazios),
+> cmdu 1. O texto ESTÁ no snippet (ex.: nome do loteamento em aspas), mas o
+> regex não extrai. Fix robusto = **passe de extração via LLM** (Gemini
+> structured output) sobre os snippets já capturados — uma abordagem conserta
+> todos os coletores DOM, custo baixo (~200 snippets). Regex por coletor
+> seria frágil. Ressalva: área/lotes/requerente muitas vezes nem constam no
+> texto do decreto publicado. Alvo de maior valor: **parcelamento_solo**
+> (loteamentos = futura oferta, sinal público real que existe, ao contrário
+> de alvarás).
+>
+> **Decisão tomada (2026-08-10):** em vez de LLM (custo), corrigi o parser do
+> `parcelamento_solo` com regex direcionado — data 100% (bug `HH:MM:SS`) e
+> nome do loteamento entre aspas (`titulo`, com filtro anti-descritor). Prod:
+> 185 loteamentos, todos datados, 40 nomeados. Exposto como seção "novos
+> loteamentos" no `/radar`. O passe de LLM fica como lever para os nomes/
+> campos dos ~145 restantes cujo decreto não traz o nome entre aspas no
+> snippet.
+>
+> **Passe de LLM construído (2026-08-10):** `src/dom_extract.py` +
+> `dom-extract <tabela> [n] [--dry-run]` — Gemini structured output sobre os
+> snippets do DOM (reusa `llm.py`, telemetria em `llm_usage`). Aplicado ao
+> `parcelamento_solo`: nomes de loteamento subiram de 40 para **143/185** com
+> nomes reais e corretos ("Jardim Botânico I", "Villa Flora Aquarius"…), custo
+> total ~US$0,03.
+> No `plano_diretor_signals` o LLM abstém (retorna null) porque os 15 sinais
+> não nomeiam bairro de rezoneamento — honesto, `radar_upzoning` segue vazio
+> por falta de dado, não de extração. **Alvará/rating**: sem fonte pública;
+> pedido de LAI pronto em `docs/LAI_alvaras_request.md` (única via de destrave).
 
 ---
 

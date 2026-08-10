@@ -1,7 +1,7 @@
 """Spatial utilities — proximity enrichment using PostGIS data in Supabase.
 
 Calcula distâncias de listings para POIs e centros econômicos.
-Requer: PostGIS ativado no Supabase (sql/042_postgis.sql aplicado)
+Requer: PostGIS ativado no Supabase (supabase/migrations/*_postgis.sql aplicado)
 
 Funções principais:
   run_proximity_enrichment() — enriquece listings com distâncias a POIs
@@ -97,7 +97,8 @@ def _calculate_proximities(
 ) -> list[dict]:
     """Busca POI mais próximo de cada categoria via PostGIS no Supabase."""
     proximities: list[dict] = []
-    categories = list(MCMV_ACCESSIBILITY_WEIGHTS.keys()) + ["university", "industrial"]
+    # health_post entra junto: no critério de saúde do MCMV, UBS/postinho conta como hospital.
+    categories = list(MCMV_ACCESSIBILITY_WEIGHTS.keys()) + ["university", "industrial", "health_post"]
 
     for category in categories:
         try:
@@ -170,6 +171,10 @@ def _calculate_mcmv_score_from_proximities(proximities: list[dict]) -> Optional[
 
     for category, criteria in MCMV_ACCESSIBILITY_WEIGHTS.items():
         dist = prox_map.get(category)
+        # Critério de saúde: usa o mais próximo entre hospital e UBS/postinho (health_post).
+        if category == "hospital":
+            candidates = [d for d in (prox_map.get("hospital"), prox_map.get("health_post")) if d is not None]
+            dist = min(candidates) if candidates else None
         weight = criteria["weight"]
         max_m = criteria["max_m"]
 

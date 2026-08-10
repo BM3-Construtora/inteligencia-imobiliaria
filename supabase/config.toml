@@ -1,0 +1,7 @@
+# Config do Supabase CLI. project_id = ref do projeto (não é secret, aparece na
+# URL). O CD aplica migrations via SUPABASE_DB_URL (--db-url), não por este link.
+project_id = "yeqzpiwabxbikwuywuhz"
+
+[db]
+# Versão do Postgres do projeto (Supabase usa 15 por padrão; ajuste se diferir).
+major_version = 15

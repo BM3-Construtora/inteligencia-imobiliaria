@@ -378,6 +378,197 @@ export function useCompetitionPoints() {
   return { points }
 }
 
+export interface BairroTipoStat {
+  bairro: string
+  property_type: string
+  total: number | null
+  ativos: number | null
+  mcmv: number | null
+  preco_mediano: number | null
+  preco_medio: number | null
+  ppm2_mediano: number | null
+  area_mediana: number | null
+  aluguel_mediano: number | null
+  aluguel_n: number | null
+  hist_total: number | null
+  saiu_do_ar: number | null
+  taxa_saida_pct: number | null
+  dias_medio: number | null
+  baixaram_preco: number | null
+}
+
+export interface BairroResumo {
+  bairro: string
+  listings_total: number
+  listings_ativos: number
+  mcmv: number
+  mcmv_pct: number | null
+  acessibilidade_media: number | null
+  acc_n: number
+  avm_total: number
+  avm_under: number
+}
+
+export interface BairroData {
+  resumo: BairroResumo
+  tipos: Record<string, BairroTipoStat>
+}
+
+// Painel do Bairro: junta as matviews bairro_resumo + bairro_tipo_stats (sql/053)
+// numa estrutura por bairro. Refresh via refresh_bairro_stats() no pipeline.
+export function useBairros() {
+  const [bairros, setBairros] = useState<Record<string, BairroData>>({})
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetch() {
+      const [resumos, tipos] = await Promise.all([
+        fetchAllRows<BairroResumo>((from) => from.select('*'), 'bairro_resumo'),
+        fetchAllRows<BairroTipoStat>((from) => from.select('*'), 'bairro_tipo_stats'),
+      ])
+
+      const map: Record<string, BairroData> = {}
+      for (const r of resumos) map[r.bairro] = { resumo: r, tipos: {} }
+      for (const t of tipos) {
+        if (!t.property_type || !map[t.bairro]) continue
+        map[t.bairro].tipos[t.property_type] = t
+      }
+      setBairros(map)
+      setLoading(false)
+    }
+    fetch()
+  }, [])
+
+  return { bairros, loading }
+}
+
+export interface TrendPoint { date: string; ppm2: number }
+
+// Série de preço/m² por bairro (terreno) a partir de market_snapshots.
+// Normaliza o nome do bairro igual ao norm_bairro do sql/053 (initcap+trim)
+// pra casar com as chaves de useBairros.
+export function useBairroLandTrends() {
+  const [trends, setTrends] = useState<Record<string, TrendPoint[]>>({})
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetch() {
+      const rows = await fetchAllRows<{ neighborhood: string | null; snapshot_date: string; avg_price_m2: number | null }>(
+        (from) => from
+          .select('neighborhood, snapshot_date, avg_price_m2')
+          .eq('property_type', 'land')
+          .not('neighborhood', 'is', null)
+          .not('avg_price_m2', 'is', null)
+          .order('snapshot_date', { ascending: true }),
+        'market_snapshots',
+      )
+      const norm = (s: string) =>
+        s.trim().split(/\s+/).map(w => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(' ')
+      const map: Record<string, TrendPoint[]> = {}
+      for (const r of rows) {
+        if (!r.neighborhood || r.avg_price_m2 == null) continue
+        const b = norm(r.neighborhood)
+        ;(map[b] ||= []).push({ date: r.snapshot_date, ppm2: r.avg_price_m2 })
+      }
+      setTrends(map)
+      setLoading(false)
+    }
+    fetch()
+  }, [])
+
+  return { trends, loading }
+}
+
+export interface UndervaluedRow {
+  listing_id: number
+  actual_price: number | null
+  p25: number | null
+  p50: number | null
+  mispricing_pct: number | null
+  shap_summary: string | null
+  confidence: number | null
+  neighborhood: string | null
+  total_area: number | null
+  url: string | null
+}
+
+// Imóveis subprecificados pelo AVM (pedido abaixo do P25). Dado real em prod.
+export function useUndervalued(limit = 50) {
+  const [rows, setRows] = useState<UndervaluedRow[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchRows() {
+      const { data } = await supabase
+        .from('avm_predictions')
+        .select(
+          'listing_id, actual_price, p25, p50, mispricing_pct, shap_summary, confidence, ' +
+          'listing:listings!inner(neighborhood, total_area, url, is_active)',
+        )
+        .eq('is_undervalued', true)
+        .order('mispricing_pct', { ascending: false })
+        .limit(limit * 2)
+
+      const out: UndervaluedRow[] = []
+      for (const r of (data as unknown as Array<Record<string, unknown>>) || []) {
+        const lraw = r.listing
+        const l = (Array.isArray(lraw) ? lraw[0] : lraw) as Record<string, unknown> | undefined
+        if (!l || !l.is_active) continue
+        out.push({
+          listing_id: r.listing_id as number,
+          actual_price: (r.actual_price as number) ?? null,
+          p25: (r.p25 as number) ?? null,
+          p50: (r.p50 as number) ?? null,
+          mispricing_pct: (r.mispricing_pct as number) ?? null,
+          shap_summary: (r.shap_summary as string) ?? null,
+          confidence: (r.confidence as number) ?? null,
+          neighborhood: (l.neighborhood as string) ?? null,
+          total_area: (l.total_area as number) ?? null,
+          url: (l.url as string) ?? null,
+        })
+        if (out.length >= limit) break
+      }
+      setRows(out)
+      setLoading(false)
+    }
+    fetchRows()
+  }, [limit])
+
+  return { rows, loading }
+}
+
+export interface Loteamento {
+  titulo: string | null
+  tipo: string | null
+  issue_date: string | null
+  neighborhood: string | null
+}
+
+// Loteamentos/desmembramentos aprovados (futura oferta). Fonte: DOM-MAR.
+export function useLoteamentos(limit = 60) {
+  const [rows, setRows] = useState<Loteamento[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchRows() {
+      const { data, count } = await supabase
+        .from('parcelamento_solo_marilia')
+        .select('titulo, tipo, issue_date, neighborhood', { count: 'exact' })
+        .not('issue_date', 'is', null)
+        .order('issue_date', { ascending: false })
+        .limit(limit)
+
+      setRows((data as Loteamento[]) || [])
+      setTotal(count || 0)
+      setLoading(false)
+    }
+    fetchRows()
+  }, [limit])
+
+  return { rows, total, loading }
+}
+
 export function useClassificationStats() {
   const [tiers, setTiers] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)

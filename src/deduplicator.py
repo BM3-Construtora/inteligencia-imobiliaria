@@ -355,21 +355,23 @@ def _compare(a: dict[str, Any], b: dict[str, Any]) -> Optional[dict[str, Any]]:
     sid_a = a.get("source_id") or ""
     sid_b = b.get("source_id") or ""
 
-    if sid_a and sid_b:
-        if sid_a == sid_b:
-            return {
-                "match_score": 1.0,
-                "addr_score": None,
-                "geo_distance_m": None,
-                "price_diff_pct": None,
-                "area_diff_pct": None,
-                "bed_match": None,
-                "bath_match": None,
-                "decision_rule": "source_id_match",
-            }
-        shared_id_portals = {"vivareal", "zapimoveis"}
-        if src_a in shared_id_portals and src_b in shared_id_portals:
-            return None
+    if sid_a and sid_b and sid_a == sid_b:
+        return {
+            "match_score": 1.0,
+            "addr_score": None,
+            "geo_distance_m": None,
+            "price_diff_pct": None,
+            "area_diff_pct": None,
+            "bed_match": None,
+            "bath_match": None,
+            "decision_rule": "source_id_match",
+        }
+
+    # Nota: antes havia um veto que descartava qualquer par vivareal×zapimoveis
+    # com source_id diferente, ignorando geo/endereço/preço. Isso deixava o mesmo
+    # imóvel anunciado nos dois portais sem parear (falso-negativo). O fluxo
+    # normal abaixo já tem vetos fortes (número de rua divergente → não-match) e
+    # exige múltiplos sinais concordando, então deixamos o scoring decidir.
 
     # Different street numbers = definitely different properties.
     # Extract numbers from address fields for a lightweight check.

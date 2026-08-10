@@ -2,11 +2,14 @@ import { useState } from 'react'
 import { Building, Home, Landmark, Trophy, DollarSign } from 'lucide-react'
 import { StatCard } from './components/StatCard'
 import { OpportunitiesTable } from './components/OpportunitiesTable'
+import { UndervaluedTable } from './components/UndervaluedTable'
+import { LoteamentosPanel } from './components/LoteamentosPanel'
 import { MarketCharts } from './components/MarketCharts'
 import { ClassificationSummary } from './components/ClassificationSummary'
 import { PropertyMap } from './components/PropertyMap'
 import { FilterBar } from './components/FilterBar'
 import { MarketBenchmarks } from './components/MarketBenchmarks'
+import { BairroPanel } from './components/BairroPanel'
 import { PriceTrend } from './components/PriceTrend'
 import { DecisionPanel } from './components/DecisionPanel'
 import { ViabilityCalculator } from './components/ViabilityCalculator'
@@ -33,10 +36,13 @@ const SOURCE_LABELS: Record<string, string> = {
 const PAGE_TITLES: Record<Page, { title: string; subtitle: string }> = {
   overview: { title: 'Visao Geral', subtitle: 'Resumo do mercado imobiliario de Marilia/SP' },
   map: { title: 'Mapa de Bairros', subtitle: 'Visualizacao geografica dos bairros e precos' },
+  bairros: { title: 'Painel do Bairro', subtitle: 'Preco por tipo, aluguel, velocidade de venda e barganhas por bairro' },
   decision: { title: 'Painel de Decisao', subtitle: 'Analise se vale construir em determinado bairro' },
   viability: { title: 'Calculadora de Viabilidade', subtitle: 'Simule projetos e calcule retorno' },
   market: { title: 'Analise de Mercado', subtitle: 'Graficos, tendencias e benchmarks' },
   opportunities: { title: 'Oportunidades', subtitle: 'Melhores terrenos ranqueados por score' },
+  undervalued: { title: 'Subprecificados', subtitle: 'Imoveis com pedido abaixo do valor justo (AVM)' },
+  loteamentos: { title: 'Novos Loteamentos', subtitle: 'Parcelamentos aprovados — futura oferta de terreno' },
   'match-review': { title: 'Revisao de Matches', subtitle: 'Confirme ou rejeite matches de dedup na zona cinza' },
   projects: { title: 'Projetos BM3', subtitle: 'Projetos proprios de construcao' },
   'data-health': { title: 'Saude dos Dados', subtitle: 'Status do pipeline e qualidade do dataset' },
@@ -161,6 +167,9 @@ function Dashboard() {
           {/* MAP PAGE */}
           {activePage === 'map' && <PropertyMap />}
 
+          {/* BAIRROS PAGE */}
+          {activePage === 'bairros' && <BairroPanel />}
+
           {/* DECISION PAGE */}
           {activePage === 'decision' && <DecisionPanel />}
 
@@ -179,6 +188,12 @@ function Dashboard() {
 
           {/* OPPORTUNITIES PAGE */}
           {activePage === 'opportunities' && <OpportunitiesTable />}
+
+          {/* UNDERVALUED PAGE */}
+          {activePage === 'undervalued' && <UndervaluedTable />}
+
+          {/* LOTEAMENTOS PAGE */}
+          {activePage === 'loteamentos' && <LoteamentosPanel />}
 
           {/* MATCH REVIEW PAGE */}
           {activePage === 'match-review' && <MatchReview />}

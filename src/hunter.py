@@ -45,30 +45,53 @@ def run_hunter() -> dict[str, int]:
             f"median_price={context['median_price']}, total_land={context['total_land']}"
         )
 
-        # Fetch all active land listings
-        result = (
-            db.table("listings")
-            .select("id, source, source_id, sale_price, total_area, "
-                    "price_per_m2, neighborhood, latitude, longitude, "
-                    "is_mcmv, title, address, first_seen_at, features")
-            .eq("is_active", True)
-            .is_("canonical_listing_id", "null")
-            .eq("property_type", "land")
-            .not_.is_("sale_price", "null")
-            .gt("sale_price", 5000)  # Filter out placeholder/error prices
-            # Exclui itens em quarentena (ppm2/área/price implausíveis marcados
-            # pelo normalizer). Sem isto, erros de parse de área — que geram
-            # preço/m² minúsculo — recebem nota máxima e viram falsos "quentes".
-            .or_("quarantined.is.false,quarantined.is.null")
-            .execute()
+        # Fetch all active land listings.
+        # mcmv_accessibility_score (Score v2, eixo spatial) vem junto quando a
+        # coluna existe; se a migration 045 não foi aplicada, refaz sem ela.
+        base_cols = (
+            "id, source, source_id, sale_price, total_area, "
+            "price_per_m2, neighborhood, latitude, longitude, "
+            "is_mcmv, title, address, first_seen_at, features"
         )
+
+        def _fetch_listings(cols: str):
+            return (
+                db.table("listings")
+                .select(cols)
+                .eq("is_active", True)
+                .is_("canonical_listing_id", "null")
+                .eq("property_type", "land")
+                .not_.is_("sale_price", "null")
+                .gt("sale_price", 5000)  # Filter out placeholder/error prices
+                # Exclui itens em quarentena (ppm2/área/price implausíveis marcados
+                # pelo normalizer). Sem isto, erros de parse de área — que geram
+                # preço/m² minúsculo — recebem nota máxima e viram falsos "quentes".
+                .or_("quarantined.is.false,quarantined.is.null")
+                .execute()
+            )
+
+        try:
+            result = _fetch_listings(base_cols + ", mcmv_accessibility_score")
+        except APIError as e:
+            if "mcmv_accessibility_score" in str(e):
+                logger.warning(
+                    "[hunter] coluna mcmv_accessibility_score ausente — "
+                    "eixo spatial do Score v2 desativado"
+                )
+                result = _fetch_listings(base_cols)
+            else:
+                raise
 
         listings = result.data
         logger.info(f"[hunter] Scoring {len(listings)} land listings (filtered price > R$5000)")
 
+        # Score v2 — sinais AVM por listing (subprecificação). Degradação
+        # graciosa: tabela vazia/ausente → mapa vazio → multiplicador V2 = 1.0.
+        avm_map = _fetch_avm_signals(db, [l["id"] for l in listings])
+
         scored = []
         for listing in listings:
-            score, breakdown = _score_listing(listing, context)
+            score, breakdown = _score_listing(listing, context, avm_map.get(listing["id"]))
             scored.append((listing, score, breakdown))
             stats["scored"] += 1
 
@@ -185,7 +208,7 @@ def run_hunter() -> dict[str, int]:
                     if percentile_cols_available:
                         logger.warning(
                             "[hunter] Coluna percentile_score ausente em opportunities. "
-                            "Aplique sql/020_hunter_score_history.sql. Pulando writes desta coluna."
+                            "Aplique supabase/migrations/*_hunter_score_history.sql. Pulando writes desta coluna."
                         )
                     percentile_cols_available = False
                     batch = [{k: v for k, v in row.items() if k != "percentile_score"} for row in batch]
@@ -197,7 +220,7 @@ def run_hunter() -> dict[str, int]:
                     if not migration_warned:
                         logger.error(
                             "[hunter] UNIQUE(listing_id) ausente em opportunities. "
-                            "Aplique sql/013_data_quality_fixes.sql. Usando fallback insert/update."
+                            "Aplique supabase/migrations/*_data_quality_fixes.sql. Usando fallback insert/update."
                         )
                         migration_warned = True
                     _fallback_upsert(db, batch)
@@ -216,7 +239,7 @@ def run_hunter() -> dict[str, int]:
                     if "PGRST205" in msg or "hunter_score_history" in msg or "PGRST204" in msg:
                         logger.warning(
                             "[hunter] Tabela hunter_score_history ausente. "
-                            "Aplique sql/020_hunter_score_history.sql. Pulando histórico."
+                            "Aplique supabase/migrations/*_hunter_score_history.sql. Pulando histórico."
                         )
                         history_table_available = False
                         break
@@ -328,9 +351,77 @@ SOURCE_CONFIDENCE = {
 }
 
 
+def _fetch_avm_signals(db: Any, listing_ids: list[int]) -> dict[int, dict]:
+    """Mapa listing_id -> sinal AVM (subprecificação) para o Score v2.
+
+    Degradação graciosa: se a tabela avm_predictions não existe (migration não
+    aplicada) ou está vazia, retorna mapa vazio e o multiplicador V2 vira 1.0.
+    """
+    out: dict[int, dict] = {}
+    if not listing_ids:
+        return out
+    for i in range(0, len(listing_ids), 200):
+        chunk = listing_ids[i:i + 200]
+        try:
+            r = (
+                db.table("avm_predictions")
+                .select("listing_id, mispricing_pct, is_undervalued, confidence")
+                .in_("listing_id", chunk)
+                .execute()
+            )
+        except APIError:
+            logger.warning("[hunter] avm_predictions indisponível — eixo AVM do Score v2 desativado")
+            return {}
+        for row in r.data or []:
+            out[row["listing_id"]] = row
+    return out
+
+
+def _v2_multiplier(
+    listing: dict[str, Any],
+    avm: dict | None,
+    breakdown: dict[str, Any],
+) -> float:
+    """Multiplicador do Score v2 a partir dos sinais do cérebro V2.
+
+    final = base * confidence * v2_multiplier, com v2 = clamp(1 + upside +
+    antecipado, 0.90, 1.30). Cada termo é 0 quando o sinal falta, então sem
+    dado o multiplicador é 1.0 e o score fica idêntico ao base (degradação
+    graciosa). Fricção regulatória fica para a fatia 2 (ver docs/specs).
+    """
+    upside = 0.0
+    antecipado = 0.0
+
+    # Eixo upside — AVM: subprecificado (p50 > pedido) empurra pra cima,
+    # ponderado pela confiança do modelo. mispricing_pct = (p50-actual)/p50*100.
+    if avm:
+        mis = avm.get("mispricing_pct")
+        conf = float(avm.get("confidence") or 0.0)
+        if mis is not None and conf >= 0.3:
+            # +0.20 no máximo (20% subprecificado com confiança), proporcional.
+            upside = max(0.0, min(float(mis) / 100.0, 0.20)) * min(conf, 1.0)
+            breakdown["v2_avm_upside"] = round(upside, 3)
+            if avm.get("is_undervalued"):
+                breakdown["v2_undervalued"] = True
+
+    # Eixo antecipado — acessibilidade MCMV (spatial), 0-100 centrado em 50.
+    access = listing.get("mcmv_accessibility_score")
+    if access is not None:
+        try:
+            a = float(access)
+            antecipado = max(-0.05, min((a - 50.0) / 500.0, 0.10))
+            breakdown["v2_accessibility"] = round(antecipado, 3)
+        except (ValueError, TypeError):
+            pass
+
+    mult = max(0.90, min(1.0 + upside + antecipado, 1.30))
+    return round(mult, 4)
+
+
 def _score_listing(
     listing: dict[str, Any],
     context: dict[str, float],
+    avm: dict | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """Score a single land listing. Returns (score, breakdown).
 
@@ -343,7 +434,8 @@ def _score_listing(
     - data_quality (10pts): completeness of fields for this listing
     - source_confidence (10pts): reliability of the source
 
-    Final score = raw_score * source_confidence_multiplier
+    Final score = raw_score * source_confidence_multiplier * v2_multiplier
+    (v2 = sinais do cérebro V2; sem dado, v2 = 1.0 → score inalterado).
     """
     breakdown: dict[str, Any] = {}
     source = listing.get("source", "")
@@ -497,10 +589,16 @@ def _score_listing(
 
     raw_total = sum(breakdown.values())
 
+    # Score v2 — sinais do cérebro V2 como multiplicador (degradação graciosa:
+    # sem dado → 1.0). Calculado antes de escrever as chaves informativas para
+    # que elas não entrem no raw_total.
+    v2_mult = _v2_multiplier(listing, avm, breakdown)
+
     # Apply source confidence as multiplier (not additive — avoids double-penalty)
-    final = round(raw_total * confidence, 1)
+    final = round(raw_total * confidence * v2_mult, 1)
     breakdown["raw_total"] = raw_total
     breakdown["confidence_multiplier"] = confidence
+    breakdown["v2_multiplier"] = v2_mult
     breakdown["total"] = final
 
     return final, breakdown

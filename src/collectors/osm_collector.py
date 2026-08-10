@@ -4,14 +4,11 @@ Fonte: OpenStreetMap via Overpass API (osmnx library)
 Tabela destino: pois
 
 Categorias coletadas:
-  - hospital (amenity=hospital, amenity=clinic)
-  - school (amenity=school, amenity=university)
-  - pharmacy (amenity=pharmacy)
-  - supermarket (shop=supermarket)
-  - bus_stop (highway=bus_stop, amenity=bus_station)
-  - park (leisure=park, leisure=garden)
-  - industrial (landuse=industrial)
-  - university (amenity=university)
+  - hospital, health_post (UBS/postinho), university, school, daycare (creche)
+  - pharmacy, supermarket, shopping, marketplace (feira), bank, fuel, police
+  - bus_stop, park, industrial
+
+Ver OSM_TAGS_BY_CATEGORY para as tags OSM exatas de cada categoria.
 
 Requer: osmnx, geopandas (adicionar ao pyproject.toml)
 """
@@ -31,23 +28,37 @@ MARILIA_PLACE = "Marília, São Paulo, Brazil"
 
 # Tags OSM por categoria
 OSM_TAGS_BY_CATEGORY: dict[str, dict] = {
-    "hospital":    {"amenity": ["hospital", "clinic"]},
-    "university":  {"amenity": ["university", "college"]},
-    "school":      {"amenity": "school"},
-    "pharmacy":    {"amenity": "pharmacy"},
-    "supermarket": {"shop": ["supermarket", "convenience"]},
-    "bus_stop":    {"highway": "bus_stop", "amenity": "bus_station"},
-    "park":        {"leisure": ["park", "garden", "playground"]},
-    "industrial":  {"landuse": "industrial"},
+    "hospital":     {"amenity": ["hospital"]},
+    "health_post":  {"amenity": ["clinic", "doctors", "health_post"]},  # UBS / postinho
+    "university":   {"amenity": ["university", "college"]},
+    "school":       {"amenity": "school"},
+    "daycare":      {"amenity": "kindergarten"},                        # creche / pré-escola
+    "pharmacy":     {"amenity": "pharmacy"},
+    "supermarket":  {"shop": ["supermarket", "convenience"]},
+    "shopping":     {"shop": ["mall", "department_store"]},             # shopping center
+    "marketplace":  {"amenity": "marketplace"},                         # feira / mercado municipal
+    "bank":         {"amenity": ["bank"]},
+    "fuel":         {"amenity": "fuel"},                                # posto de combustível
+    "police":       {"amenity": "police"},
+    "bus_stop":     {"highway": "bus_stop", "amenity": "bus_station"},
+    "park":         {"leisure": ["park", "garden", "playground"]},
+    "industrial":   {"landuse": "industrial"},
 }
 
 # Mapeamento subcategoria OSM → categoria interna
 SUBCATEGORY_MAP: dict[str, str] = {
-    "hospital": "hospital", "clinic": "hospital",
+    "hospital": "hospital",
+    "clinic": "health_post", "doctors": "health_post", "health_post": "health_post",
     "university": "university", "college": "university",
     "school": "school",
+    "kindergarten": "daycare",
     "pharmacy": "pharmacy",
     "supermarket": "supermarket", "convenience": "supermarket",
+    "mall": "shopping", "department_store": "shopping",
+    "marketplace": "marketplace",
+    "bank": "bank",
+    "fuel": "fuel",
+    "police": "police",
     "bus_stop": "bus_stop", "bus_station": "bus_stop",
     "park": "park", "garden": "park", "playground": "park",
     "industrial": "industrial",
