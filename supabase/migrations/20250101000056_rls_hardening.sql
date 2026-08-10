@@ -30,13 +30,15 @@ ALTER TABLE IF EXISTS cities               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS data_audit_log        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS data_retention_policies ENABLE ROW LEVEL SECURITY;
 
--- Camada espacial/geo e embeddings.
-ALTER TABLE IF EXISTS pois                  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS census_sectors        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS economic_centroids    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS listing_poi_proximity ENABLE ROW LEVEL SECURITY;
+-- Embeddings (RAG interno, não vão ao front).
 ALTER TABLE IF EXISTS listing_embeddings    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS document_embeddings   ENABLE ROW LEVEL SECURITY;
+
+-- NÃO fechamos a camada geo pública (pois, census_sectors, economic_centroids,
+-- listing_poi_proximity): são dados IBGE/OSM, não o edge competitivo, e alimentam
+-- o mapa do dashboard via as funções *_geojson (migration map_geojson). Fechar
+-- RLS aqui esvaziaria as camadas do mapa para o anon se as funções forem
+-- SECURITY INVOKER.
 
 -- Índices macro auxiliares.
 ALTER TABLE IF EXISTS agronegocio_index     ENABLE ROW LEVEL SECURITY;
