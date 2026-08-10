@@ -4,6 +4,7 @@
 -- estavam no banco). Cole INTEIRO no SQL editor do Supabase.
 -- Idempotente (CREATE ... IF NOT EXISTS / OR REPLACE). Ordem importa:
 -- 042 cria census_sectors/economic_centroids; 045 e 052 dependem dele.
+-- Requer extensões postgis (042) e vector (047).
 -- ============================================================
 
 
@@ -104,7 +105,6 @@ SELECT
   l.neighborhood,
   l.property_type,
   l.is_active,
-  l.score,
   l.latitude,
   l.longitude,
   l.geom,

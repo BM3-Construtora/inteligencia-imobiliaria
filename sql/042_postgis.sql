@@ -94,7 +94,6 @@ SELECT
   l.neighborhood,
   l.property_type,
   l.is_active,
-  l.score,
   l.latitude,
   l.longitude,
   l.geom,
