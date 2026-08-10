@@ -139,6 +139,17 @@ Pendente na Onda 2 (evolução, não bloqueia): geocode fino de alvarás/EIV (ho
 
 ---
 
+> ## Validação em browser (2026-08-10)
+> Dashboard rodado em dev: sidebar + telas novas renderizam; o **mapa** mostra
+> Densidade (566 setores via RPC), Polos e APP corretamente (RPC SECURITY
+> DEFINER bypassa RLS). Duas telas vinham vazias por **RLS anon**:
+> - **Novos Loteamentos** (`parcelamento_solo_marilia`): RLS sem policy anon →
+>   corrigido em `20250101000058_parcelamento_public_read.sql` (dado público).
+> - **Subprecificados** (`avm_predictions`): fechado DE PROPÓSITO pelo
+>   `rls_hardening` (056) — "sinais de negociação sensíveis". NÃO reaberto.
+>   Para a tela funcionar sem expor o dado: Supabase Auth ou RPC de recorte.
+>   Decisão de arquitetura do dono (ADR pendente).
+
 ## Onda 3 — Produtos compostos
 
 Quando os órfãos estiverem expostos, o salto seguinte é compor, não adicionar.
