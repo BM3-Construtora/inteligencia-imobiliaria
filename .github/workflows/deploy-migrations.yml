@@ -55,10 +55,15 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          CNT=$(psql "$SUPABASE_DB_URL" -tAc "select count(*) from supabase_migrations.schema_migrations" 2>/dev/null || echo 0)
-          echo "schema_migrations registradas: ${CNT:-0}"
-          if [ "${CNT:-0}" -lt 40 ]; then
-            echo "::error::Baseline não feito (schema_migrations=${CNT:-0}). Rode 'supabase migration repair --status applied ...' antes de mergear migrations. Abortando para não reaplicar tudo."
+          # sslmode=require: o pooler do Supabase exige TLS; sem isto o psql do
+          # runner falha o handshake e o guard via falso 0.
+          URL="$SUPABASE_DB_URL"
+          case "$URL" in *sslmode=*) : ;; *\?*) URL="$URL&sslmode=require";; *) URL="$URL?sslmode=require";; esac
+          CNT=$(psql "$URL" -tAc "select count(*) from supabase_migrations.schema_migrations")
+          CNT=$(echo "$CNT" | tr -d '[:space:]')
+          echo "schema_migrations registradas: '$CNT'"
+          if ! echo "$CNT" | grep -qE '^[0-9]+$' || [ "$CNT" -lt 40 ]; then
+            echo "::error::Baseline não confirmado (schema_migrations='$CNT'). Rode o baseline (scripts/baseline_schema_migrations.sql ou 'supabase migration repair') antes. Abortando."
             exit 1
           fi
 
