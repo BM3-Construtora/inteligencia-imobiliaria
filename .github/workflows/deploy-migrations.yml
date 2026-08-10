@@ -57,11 +57,6 @@ jobs:
           # SSL via env, sem mexer na URL (o pooler do Supabase exige TLS).
           PGSSLMODE: require
         run: |
-          echo "url_len=${#SUPABASE_DB_URL}"
-          case "$SUPABASE_DB_URL" in
-            postgresql://*|postgres://*) echo "scheme=ok" ;;
-            *) echo "scheme=MISSING — o secret não começa com postgresql://" ;;
-          esac
           CNT=$(psql "$SUPABASE_DB_URL" -tAc "select count(*) from supabase_migrations.schema_migrations")
           CNT=$(echo "$CNT" | tr -d '[:space:]')
           echo "schema_migrations registradas: '$CNT'"
@@ -74,4 +69,7 @@ jobs:
         if: steps.guard.outputs.ready == 'true'
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: supabase db push --db-url "$SUPABASE_DB_URL"
+        # --include-all: aplica pendentes cuja version é anterior à última já
+        # aplicada no remoto (ex.: map_geojson/rls_hardening vêm antes de
+        # bairro_stats, que já estava em prod). Todas as pendentes são idempotentes.
+        run: supabase db push --include-all --db-url "$SUPABASE_DB_URL"
