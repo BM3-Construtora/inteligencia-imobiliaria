@@ -181,6 +181,75 @@ def get_undervalued_text(limit: int = 10) -> str:
     return "\n".join(lines)
 
 
+def get_radar_text(neighborhood: str | None = None, limit: int = 8) -> str:
+    """Radar de lançamentos: pipeline competitivo (alvarás/EIV) + sinais de upzoning.
+
+    Alvará de aprovação aparece 18-36 meses antes do habite-se; EIV antes do alvará;
+    sinais de plano diretor/CMDU antes de tudo. É o pipeline mais adiantado que existe.
+    """
+    db = get_client()
+    escopo = f" — {neighborhood}" if neighborhood else ""
+    lines = [f"📡 *Radar de lançamentos{escopo}*\n"]
+
+    # 1) Pipeline competitivo (radar_concorrencia)
+    lines.append("*🏗 Pipeline competitivo* (alvarás/EIV, 24 meses)")
+    try:
+        q = db.table("radar_concorrencia").select(
+            "tipo_sinal, publication_date, requerente, neighborhood, area_m2, unidades, subtipo, resultado"
+        )
+        if neighborhood:
+            q = q.ilike("neighborhood", f"%{neighborhood}%")
+        rows = (q.order("publication_date", desc=True).limit(limit).execute()).data or []
+    except Exception:
+        rows = []
+
+    if rows:
+        for r in rows:
+            emoji = "🏢" if r.get("tipo_sinal") == "eiv" else "🏗"
+            data = str(r.get("publication_date") or "")[:10]
+            req = r.get("requerente") or "requerente não informado"
+            bairro = r.get("neighborhood") or "?"
+            area = r.get("area_m2")
+            area_s = f" | {float(area):,.0f}m²".replace(",", ".") if area else ""
+            und = r.get("unidades")
+            und_s = f" | {und}u" if und else ""
+            extra = r.get("resultado") or r.get("subtipo") or ""
+            extra_s = f" ({extra})" if extra else ""
+            lines.append(f"{emoji} {data} *{bairro}* — {req}{area_s}{und_s}{extra_s}")
+    else:
+        lines.append("_Nenhum alvará/EIV recente" + (f" em {neighborhood}." if neighborhood else ".") + "_")
+    lines.append("")
+
+    # 2) Sinais de upzoning (radar_upzoning)
+    lines.append("*📈 Sinais de upzoning* (rezoneamento antecipado)")
+    try:
+        q2 = db.table("radar_upzoning").select(
+            "bairro, total_sinais, ultimo_sinal, tem_plano_diretor, tem_audiencia_publica"
+        )
+        if neighborhood:
+            q2 = q2.ilike("bairro", f"%{neighborhood}%")
+        ups = (q2.limit(limit).execute()).data or []
+    except Exception:
+        ups = []
+
+    if ups:
+        for u in ups:
+            bairro = u.get("bairro") or "?"
+            n = u.get("total_sinais") or 0
+            ult = str(u.get("ultimo_sinal") or "")[:10]
+            flags = []
+            if u.get("tem_plano_diretor"):
+                flags.append("PD")
+            if u.get("tem_audiencia_publica"):
+                flags.append("audiência")
+            flags_s = f" [{', '.join(flags)}]" if flags else ""
+            lines.append(f"• *{bairro}* — {n} sinal(is), últ. {ult}{flags_s}")
+    else:
+        lines.append("_Nenhum sinal de upzoning" + (f" em {neighborhood}." if neighborhood else ".") + "_")
+
+    return "\n".join(lines)
+
+
 def get_construtora_rating_text(nome_or_cnpj: str) -> str:
     """Rating público de uma construtora (dados DOM-MAR + CNPJ). Para /construtora."""
     from src.rating_construtoras import get_construtora_rating

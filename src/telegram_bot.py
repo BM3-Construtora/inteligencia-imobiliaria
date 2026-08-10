@@ -39,6 +39,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/viabilidade <preco> <area> — Simular projeto MCMV\n"
         "/ficha <endereco|CEP|coord|URL> — Ficha completa do terreno\n"
         "/regras <pergunta> — Pergunte sobre zoneamento/CMDU/EIV/Plano Diretor\n"
+        "/radar [bairro] — Lançamentos futuros (alvarás/EIV) e sinais de upzoning\n"
         "/mercado — Resumo geral do mercado\n"
         "/relatorio — Relatorio semanal completo\n"
         "/deal_add <listing_id> <stage> — Registrar visita/oferta\n"
@@ -144,6 +145,16 @@ async def cmd_regras(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(chunk, parse_mode="Markdown", disable_web_page_preview=True)
 
 
+async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Radar de lançamentos: alvarás/EIV futuros + sinais de upzoning."""
+    neighborhood = " ".join(context.args) if context.args else None
+    await update.message.reply_text("Montando radar de lançamentos...")
+    from src.telegram.queries import get_radar_text
+    text = get_radar_text(neighborhood)
+    for chunk in _split_message(text):
+        await update.message.reply_text(chunk, parse_mode="Markdown", disable_web_page_preview=True)
+
+
 async def cmd_mercado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Market summary."""
     await update.message.reply_text("Buscando dados do mercado...")
@@ -232,6 +243,9 @@ def run_bot() -> None:
 
     # RAG regulatório (CMDU, alvarás, EIV, Plano Diretor)
     app.add_handler(CommandHandler("regras", cmd_regras))
+
+    # Radar de lançamentos (alvarás/EIV + upzoning)
+    app.add_handler(CommandHandler("radar", cmd_radar))
 
     # Track D — bm3_deals + calibration
     from src.telegram.handlers_deals import (
