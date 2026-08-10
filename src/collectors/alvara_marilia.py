@@ -45,11 +45,13 @@ HEADERS = {
 TIMEOUT = 60
 SLEEP_BETWEEN_YEARS = 2.0
 
+# Exige a palavra "alvará"/"licença" em contexto de obra. A alternativa solta
+# "aprovação de projeto" foi removida: casava cabeçalhos administrativos
+# (ex.: "Divisão de Aprovação de Projetos") como se fossem alvarás reais.
 RE_ALVARA_BLOCK = re.compile(
     r"(?:"
     r"alvará\s+de\s+(?:aprova[çc][ãa]o|constru[çc][ãa]o|licen[çc]a)"
-    r"|licen[çc]a\s+de\s+(?:constru[çc][ãa]o|obras?)"
-    r"|aprova[çc][ãa]o\s+de\s+projeto"
+    r"|licen[çc]a\s+(?:de\s+)?(?:constru[çc][ãa]o|obras?)"
     r")"
     r"[^\n]{0,600}",
     re.IGNORECASE,
@@ -180,7 +182,7 @@ def _parse_edition_date(ed: dict[str, Any]) -> date | None:
     raw = ed.get("data") or ed.get("date") or ed.get("publicacao") or ""
     if not raw:
         return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d", "%d/%m/%Y"):
         try:
             return datetime.strptime(str(raw)[:19], fmt).date()
         except ValueError:

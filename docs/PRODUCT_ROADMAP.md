@@ -89,6 +89,21 @@ O `PropertyMap` agora tem uma barra de camadas toggleáveis:
 
 Pendente na Onda 2 (evolução, não bloqueia): geocode fino de alvarás/EIV (hoje no centroide do bairro); `send_location`/static map no bot; POIs individuais no mapa.
 
+> ## ⚠️ Achado de fonte (2026-08-10): alvarás de construção não estão no DOM-MAR dados-abertos
+> Ao rodar `alvara_marilia` ponta a ponta pela 1ª vez: a API
+> `dados-abertos/diario-oficial` **não publica registros estruturados de
+> alvará de aprovação/construção**. Em 2024-2026, "alvará de aprovação/
+> construção" = 0 ocorrências; "requerente" aparece só em contextos
+> administrativos não-construtivos. Os 2 "alvarás" antes coletados eram
+> falso-positivo em "Divisão de Aprovação de Projetos" (cabeçalho).
+> **Impacto:** `/construtora` (rating depende de alvarás) e metade do
+> `/radar` não têm fonte de dados — não é bug de parser. O sinal do moat
+> ("alvará 18-36 meses antes") exige achar a fonte real (sistema de
+> licenciamento municipal, SEPLAN, ou PDF do DOM não exposto neste JSON).
+> Corrigido no coletor: parser de data (`YYYY-MM-DD HH:MM:SS`) e regex do
+> bloco (não casa mais cabeçalho administrativo) → agora retorna 0 honesto
+> em vez de linhas-lixo.
+
 ---
 
 ## Onda 3 — Produtos compostos
