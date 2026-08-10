@@ -213,7 +213,22 @@ export interface MapListingPoint {
   url: string | null
   is_mcmv: boolean
   market_tier: string | null
+  mcmv_score: number | null
   score: number
+}
+
+type EmbeddedListing = {
+  id: number
+  neighborhood: string | null
+  latitude: number | null
+  longitude: number | null
+  sale_price: number | null
+  total_area: number | null
+  price_per_m2: number | null
+  url: string | null
+  is_mcmv: boolean
+  market_tier: string | null
+  mcmv_accessibility_score: number | null
 }
 
 // Pins por imóvel no mapa: usa o conjunto de oportunidades (acionável e
@@ -225,15 +240,9 @@ export function useOpportunityPoints() {
 
   useEffect(() => {
     async function fetchPoints() {
-      const rows = await fetchAllRows<{
-        score: number
-        listing:
-          | { id: number; neighborhood: string | null; latitude: number | null; longitude: number | null; sale_price: number | null; total_area: number | null; price_per_m2: number | null; url: string | null; is_mcmv: boolean; market_tier: string | null }
-          | { id: number; neighborhood: string | null; latitude: number | null; longitude: number | null; sale_price: number | null; total_area: number | null; price_per_m2: number | null; url: string | null; is_mcmv: boolean; market_tier: string | null }[]
-          | null
-      }>(
+      const rows = await fetchAllRows<{ score: number; listing: EmbeddedListing | EmbeddedListing[] | null }>(
         (from) => from.select(
-          'score, listing:listings!inner(id, neighborhood, latitude, longitude, sale_price, total_area, price_per_m2, url, is_mcmv, market_tier)',
+          'score, listing:listings!inner(id, neighborhood, latitude, longitude, sale_price, total_area, price_per_m2, url, is_mcmv, market_tier, mcmv_accessibility_score)',
         ),
         'opportunities',
       )
@@ -253,6 +262,7 @@ export function useOpportunityPoints() {
           url: l.url,
           is_mcmv: l.is_mcmv,
           market_tier: l.market_tier,
+          mcmv_score: l.mcmv_accessibility_score,
           score: r.score,
         })
       }
@@ -263,6 +273,109 @@ export function useOpportunityPoints() {
   }, [])
 
   return { points, loading }
+}
+
+export interface CensusSector {
+  sector_code: string
+  renda_per_capita: number | null
+  densidade_demo: number | null
+  geometry: GeoJSON.Geometry
+}
+
+// Choropleth de renda: setores censitários via RPC GeoJSON (sql/052).
+export function useCensusGeoJson() {
+  const [sectors, setSectors] = useState<CensusSector[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchSectors() {
+      const { data, error } = await supabase.rpc('census_sectors_geojson')
+      if (error || !data) { setLoading(false); return }
+      const parsed: CensusSector[] = []
+      for (const row of data as { sector_code: string; renda_per_capita: number | null; densidade_demo: number | null; geojson: string }[]) {
+        try {
+          parsed.push({
+            sector_code: row.sector_code,
+            renda_per_capita: row.renda_per_capita,
+            densidade_demo: row.densidade_demo,
+            geometry: JSON.parse(row.geojson) as GeoJSON.Geometry,
+          })
+        } catch { /* geojson inválido — pula o setor */ }
+      }
+      setSectors(parsed)
+      setLoading(false)
+    }
+    fetchSectors()
+  }, [])
+
+  return { sectors, loading }
+}
+
+export interface EconomicCentroid {
+  name: string
+  label_pt: string | null
+  latitude: number
+  longitude: number
+  radius_m: number
+  description: string | null
+}
+
+// Polos econômicos + raio de influência (RPC sql/052).
+export function useEconomicCentroids() {
+  const [centroids, setCentroids] = useState<EconomicCentroid[]>([])
+
+  useEffect(() => {
+    async function fetchCentroids() {
+      const { data, error } = await supabase.rpc('economic_centroids_geojson')
+      if (error || !data) return
+      setCentroids(data as EconomicCentroid[])
+    }
+    fetchCentroids()
+  }, [])
+
+  return { centroids }
+}
+
+export interface CompetitionPoint {
+  neighborhood: string
+  latitude: number
+  longitude: number
+  count: number
+}
+
+// Radar de concorrência plotado no centroide do bairro (v1 sem geocode fino):
+// agrega alvarás/EIV de radar_concorrencia por bairro e cruza com as
+// coordenadas de `neighborhoods`.
+export function useCompetitionPoints() {
+  const [points, setPoints] = useState<CompetitionPoint[]>([])
+
+  useEffect(() => {
+    async function fetchCompetition() {
+      const [radar, neighborhoods] = await Promise.all([
+        supabase.from('radar_concorrencia').select('neighborhood'),
+        supabase.from('neighborhoods').select('name, latitude, longitude').not('latitude', 'is', null),
+      ])
+
+      const counts: Record<string, number> = {}
+      for (const r of (radar.data as { neighborhood: string | null }[] | null) || []) {
+        if (r.neighborhood) counts[r.neighborhood.toLowerCase()] = (counts[r.neighborhood.toLowerCase()] || 0) + 1
+      }
+      const coords: Record<string, { name: string; lat: number; lng: number }> = {}
+      for (const n of (neighborhoods.data as { name: string; latitude: number; longitude: number }[] | null) || []) {
+        coords[n.name.toLowerCase()] = { name: n.name, lat: n.latitude, lng: n.longitude }
+      }
+
+      const pts: CompetitionPoint[] = []
+      for (const [key, count] of Object.entries(counts)) {
+        const c = coords[key]
+        if (c) pts.push({ neighborhood: c.name, latitude: c.lat, longitude: c.lng, count })
+      }
+      setPoints(pts)
+    }
+    fetchCompetition()
+  }, [])
+
+  return { points }
 }
 
 export function useClassificationStats() {

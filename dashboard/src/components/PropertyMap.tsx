@@ -1,7 +1,13 @@
 import { useState, useMemo } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, CircleMarker, Circle, Polyline, GeoJSON, Popup } from 'react-leaflet'
 import { useFilteredNeighborhoods } from '../hooks/useFilteredData'
-import { useOpportunityPoints } from '../hooks/useSupabase'
+import {
+  useOpportunityPoints,
+  useCensusGeoJson,
+  useEconomicCentroids,
+  useCompetitionPoints,
+} from '../hooks/useSupabase'
+import { WATER_COURSES } from '../data/waterCourses'
 import { MapLegend } from './MapLegend'
 import type { Neighborhood } from '../types'
 import 'leaflet/dist/leaflet.css'
@@ -51,7 +57,7 @@ function fmt(n: number | null): string {
   return `R$ ${n.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`
 }
 
-// Score alto (boa oportunidade) = verde; score baixo = vermelho.
+// Valor alto (boa oportunidade / boa acessibilidade) = verde; baixo = vermelho.
 function scoreToColor(score: number): string {
   const t = Math.min(1, Math.max(0, score / 100))
   const r = Math.round(239 - t * (239 - 34))
@@ -59,12 +65,40 @@ function scoreToColor(score: number): string {
   return `rgb(${r}, ${g}, 68)`
 }
 
+// Choropleth de renda: sequencial roxo (baixa) → amarelo (alta).
+function rendaToColor(renda: number | null, min: number, max: number): string {
+  if (renda == null || max === min) return '#475569'
+  const t = Math.min(1, Math.max(0, (renda - min) / (max - min)))
+  const r = Math.round(68 + t * (250 - 68))
+  const g = Math.round(51 + t * (204 - 51))
+  const b = Math.round(122 - t * (122 - 21))
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+type PinColor = 'score' | 'mcmv'
+
 export function PropertyMap() {
   const { neighborhoods, loading } = useFilteredNeighborhoods()
   const { points } = useOpportunityPoints()
+  const { sectors } = useCensusGeoJson()
+  const { centroids } = useEconomicCentroids()
+  const { points: competition } = useCompetitionPoints()
   const [view, setView] = useState<MapView>('all')
   const [colorMode, setColorMode] = useState<ColorMode>('price')
   const [showListings, setShowListings] = useState(false)
+  const [pinColor, setPinColor] = useState<PinColor>('score')
+  const [showRenda, setShowRenda] = useState(false)
+  const [showPolos, setShowPolos] = useState(false)
+  const [showApp, setShowApp] = useState(false)
+  const [showConcorrencia, setShowConcorrencia] = useState(false)
+
+  const { rendaMin, rendaMax } = useMemo(() => {
+    const rs = sectors.map(s => s.renda_per_capita).filter((r): r is number => r != null)
+    return {
+      rendaMin: rs.length ? Math.min(...rs) : 0,
+      rendaMax: rs.length ? Math.max(...rs) : 1,
+    }
+  }, [sectors])
 
   const { filtered, minPrice, maxPrice, minRisk, maxRisk } = useMemo(() => {
     const withCoords = neighborhoods.filter(n => n.latitude != null && n.longitude != null)
@@ -103,15 +137,7 @@ export function PropertyMap() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowListings(v => !v)}
-            className={`px-3 py-1 text-xs rounded-md transition-colors ${
-              showListings ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-            }`}
-          >
-            Imoveis
-          </button>
-          <div className="flex gap-1 border-l border-slate-600 pl-3">
+          <div className="flex gap-1">
             {([['all', 'Todos'], ['land', 'Terrenos'], ['houses', 'Casas']] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -153,6 +179,43 @@ export function PropertyMap() {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-xs text-slate-500 mr-1">Camadas:</span>
+        {([
+          ['Imoveis', showListings, () => setShowListings(v => !v)],
+          ['Renda', showRenda, () => setShowRenda(v => !v)],
+          ['Polos', showPolos, () => setShowPolos(v => !v)],
+          ['APP', showApp, () => setShowApp(v => !v)],
+          ['Concorrencia', showConcorrencia, () => setShowConcorrencia(v => !v)],
+        ] as const).map(([label, active, toggle]) => (
+          <button
+            key={label}
+            onClick={toggle}
+            className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+              active ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        {showListings && (
+          <div className="flex gap-1 border-l border-slate-600 pl-2 ml-1">
+            <span className="text-xs text-slate-500 self-center">cor:</span>
+            {([['score', 'Score'], ['mcmv', 'Acessib. MCMV']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setPinColor(key)}
+                className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                  pinColor === key ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg overflow-hidden relative" style={{ height: 420 }}>
@@ -232,42 +295,110 @@ export function PropertyMap() {
               </CircleMarker>
             )
           })}
-          {showListings && points.map(p => (
-            <CircleMarker
-              key={`opp-${p.id}`}
-              center={[p.latitude, p.longitude]}
-              radius={5}
-              pathOptions={{
-                color: '#0f172a',
-                fillColor: scoreToColor(p.score),
-                fillOpacity: 0.9,
-                weight: 1,
+          {/* Choropleth de renda por setor censitário */}
+          {showRenda && sectors.map(s => (
+            <GeoJSON
+              key={`census-${s.sector_code}`}
+              data={s.geometry}
+              style={{
+                fillColor: rendaToColor(s.renda_per_capita, rendaMin, rendaMax),
+                fillOpacity: 0.45,
+                color: '#1e293b',
+                weight: 0.5,
               }}
+            />
+          ))}
+
+          {/* Polos econômicos + raio de influência */}
+          {showPolos && centroids.map(c => (
+            <Circle
+              key={`polo-${c.name}`}
+              center={[c.latitude, c.longitude]}
+              radius={c.radius_m}
+              pathOptions={{ color: '#38bdf8', fillColor: '#38bdf8', fillOpacity: 0.12, weight: 1.5 }}
             >
               <Popup>
-                <div className="text-sm min-w-[180px]">
-                  <p className="font-bold mb-1">
-                    {p.neighborhood || 'Imovel'}{p.is_mcmv ? ' ✅MCMV' : ''}
-                  </p>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mb-1">
-                    <span className="text-gray-500">Score:</span>
-                    <span className="font-medium">{p.score.toFixed(0)}/100</span>
-                    <span className="text-gray-500">Preco:</span>
-                    <span className="font-medium">{fmt(p.sale_price)}</span>
-                    <span className="text-gray-500">Area:</span>
-                    <span className="font-medium">{p.total_area != null ? `${p.total_area.toLocaleString('pt-BR')} m²` : '-'}</span>
-                    <span className="text-gray-500">R$/m²:</span>
-                    <span className="font-medium">{fmt(p.price_per_m2)}</span>
-                  </div>
-                  {p.url && (
-                    <a href={p.url} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs font-medium">
-                      Ver anuncio
-                    </a>
-                  )}
+                <div className="text-sm">
+                  <p className="font-bold">{c.label_pt || c.name}</p>
+                  {c.description && <p className="text-xs text-gray-600">{c.description}</p>}
+                  <p className="text-xs text-gray-500">Raio de influência: {c.radius_m} m</p>
+                </div>
+              </Popup>
+            </Circle>
+          ))}
+
+          {/* APP — cursos d'água (restrição construtiva) */}
+          {showApp && WATER_COURSES.map(w => (
+            <Polyline
+              key={`app-${w.nome}`}
+              positions={w.coords}
+              pathOptions={{ color: '#22d3ee', weight: 3, opacity: 0.8 }}
+            >
+              <Popup>
+                <div className="text-sm">
+                  <p className="font-bold">{w.nome}</p>
+                  <p className="text-xs text-gray-600">APP: faixa de {w.appBufferM}m de cada lado (Lei 12.651/2012)</p>
+                </div>
+              </Popup>
+            </Polyline>
+          ))}
+
+          {/* Radar de concorrência por bairro (centroide) */}
+          {showConcorrencia && competition.map(c => (
+            <CircleMarker
+              key={`conc-${c.neighborhood}`}
+              center={[c.latitude, c.longitude]}
+              radius={Math.max(8, Math.sqrt(c.count) * 5)}
+              pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.35, weight: 2 }}
+            >
+              <Popup>
+                <div className="text-sm">
+                  <p className="font-bold">{c.neighborhood}</p>
+                  <p className="text-xs text-gray-600">{c.count} sinal(is) de alvará/EIV (24 meses)</p>
                 </div>
               </Popup>
             </CircleMarker>
           ))}
+
+          {/* Pins por imóvel (oportunidades) */}
+          {showListings && points.map(p => {
+            const pinFill = pinColor === 'mcmv'
+              ? (p.mcmv_score != null ? scoreToColor(p.mcmv_score) : '#94a3b8')
+              : scoreToColor(p.score)
+            return (
+              <CircleMarker
+                key={`opp-${p.id}`}
+                center={[p.latitude, p.longitude]}
+                radius={5}
+                pathOptions={{ color: '#0f172a', fillColor: pinFill, fillOpacity: 0.9, weight: 1 }}
+              >
+                <Popup>
+                  <div className="text-sm min-w-[180px]">
+                    <p className="font-bold mb-1">
+                      {p.neighborhood || 'Imovel'}{p.is_mcmv ? ' ✅MCMV' : ''}
+                    </p>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mb-1">
+                      <span className="text-gray-500">Score:</span>
+                      <span className="font-medium">{p.score.toFixed(0)}/100</span>
+                      <span className="text-gray-500">Acessib. MCMV:</span>
+                      <span className="font-medium">{p.mcmv_score != null ? `${p.mcmv_score.toFixed(0)}/100` : '-'}</span>
+                      <span className="text-gray-500">Preco:</span>
+                      <span className="font-medium">{fmt(p.sale_price)}</span>
+                      <span className="text-gray-500">Area:</span>
+                      <span className="font-medium">{p.total_area != null ? `${p.total_area.toLocaleString('pt-BR')} m²` : '-'}</span>
+                      <span className="text-gray-500">R$/m²:</span>
+                      <span className="font-medium">{fmt(p.price_per_m2)}</span>
+                    </div>
+                    {p.url && (
+                      <a href={p.url} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs font-medium">
+                        Ver anuncio
+                      </a>
+                    )}
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )
+          })}
         </MapContainer>
         <MapLegend
           minPrice={colorMode === 'risk' ? minRisk : colorMode === 'heat' ? 0 : minPrice}

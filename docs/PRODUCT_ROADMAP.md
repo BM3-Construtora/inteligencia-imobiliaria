@@ -53,18 +53,18 @@ Ordenado por valor × esforço. Dado já computado em todos.
 Hoje o mapa mostra bolha de bairro. A oportunidade é torná-lo o produto central,
 empilhando camadas que já existem no PostGIS:
 
-- ✅ **Pins por imóvel** (incremento 1, feito): toggle "Imóveis" no `PropertyMap` renderiza as oportunidades como pins coloridos por score (verde=bom), popup com preço/área/R$m²/link. Usa o conjunto de oportunidades (limitado) para não travar o Leaflet com ~20k listings. React puro, sem RPC.
-- Choropleth de renda por setor censitário (`census_sectors`). Para MCMV, mapa de renda = mapa de demanda.
-- Score de acessibilidade MCMV como heatmap (proximidade escola/ônibus/UBS = elegibilidade Caixa).
-- POIs + polos econômicos com raios de influência.
-- Overlay de APP/cursos d'água (`regulatory_geo.WATER_COURSES`) como alerta de restrição construtiva.
-- Radar de concorrência geolocalizado: geocodar endereço de alvarás/EIV (pipeline de geocode já existe em `ficha.py`).
+O `PropertyMap` agora tem uma barra de camadas toggleáveis:
 
-**Pré-requisito técnico (bloqueia toda a Onda 2):** o front acessa Supabase direto
-e não há RPC que devolva geometria. Criar endpoint `ST_AsGeoJSON` para servir
-polígonos de censo e geometrias. É a primeira peça aqui.
+- ✅ **Pins por imóvel** (incremento 1): oportunidades como pins coloridos por score (verde=bom), com sub-toggle de cor **score ↔ acessibilidade MCMV**; popup com preço/área/R$m²/link. Usa o conjunto de oportunidades (limitado) para não travar o Leaflet com ~20k listings.
+- ✅ **Choropleth de renda** por setor censitário (`census_sectors`): camada "Renda" via RPC GeoJSON. Para MCMV, mapa de renda = mapa de demanda.
+- ✅ **Acessibilidade MCMV**: sub-modo de cor dos pins (proximidade escola/ônibus/UBS = elegibilidade Caixa), lendo `mcmv_accessibility_score`.
+- ✅ **Polos econômicos** com raio de influência (`economic_centroids`): camada "Polos".
+- ✅ **Overlay de APP/cursos d'água** (`WATER_COURSES` espelhado em `dashboard/src/data/waterCourses.ts`): camada "APP", alerta de restrição construtiva.
+- ✅ **Radar de concorrência** (camada "Concorrencia"): sinais de alvará/EIV agregados por bairro e plotados no centroide do bairro (v1 sem geocode fino — cruza `radar_concorrencia` com coords de `neighborhoods`).
 
-No bot: `send_location` / static map anotado com terreno + comps (hoje só link cru do Google Maps).
+**Pré-requisito técnico resolvido:** o front acessava Supabase direto sem RPC de geometria. Migration `sql/052_map_geojson.sql` adiciona `census_sectors_geojson()` e `economic_centroids_geojson()` (SECURITY DEFINER, GRANT anon). **Precisa ser aplicada no Supabase** para as camadas Renda/Polos carregarem.
+
+Pendente na Onda 2 (evolução, não bloqueia): geocode fino de alvarás/EIV (hoje no centroide do bairro); `send_location`/static map no bot; POIs individuais no mapa.
 
 ---
 
