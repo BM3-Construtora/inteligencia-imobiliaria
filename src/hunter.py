@@ -122,6 +122,33 @@ def run_hunter() -> dict[str, int]:
             })
             stats["opportunities"] += 1
 
+        # Preserva last_notified_price: o notifier grava esse valor dentro de
+        # score_breakdown para detectar quedas de preço. Como o upsert abaixo
+        # sobrescreve o breakdown inteiro, sem este merge a chave seria apagada
+        # a cada run do hunter, quebrando a renotificação por price-drop.
+        if opp_batch:
+            opp_listing_ids = [o["listing_id"] for o in opp_batch]
+            last_price_by_listing: dict[int, float] = {}
+            for i in range(0, len(opp_listing_ids), 100):
+                chunk = opp_listing_ids[i:i + 100]
+                try:
+                    er = (
+                        db.table("opportunities")
+                        .select("listing_id, score_breakdown")
+                        .in_("listing_id", chunk)
+                        .execute()
+                    )
+                except APIError:
+                    continue
+                for row in er.data or []:
+                    bd = row.get("score_breakdown") or {}
+                    if isinstance(bd, dict) and bd.get("last_notified_price"):
+                        last_price_by_listing[row["listing_id"]] = bd["last_notified_price"]
+            for o in opp_batch:
+                lnp = last_price_by_listing.get(o["listing_id"])
+                if lnp and isinstance(o.get("score_breakdown"), dict):
+                    o["score_breakdown"]["last_notified_price"] = lnp
+
         # Flag controls whether new column / history table writes are attempted.
         # If migration 020 is not applied we log once and skip the rest.
         percentile_cols_available = True

@@ -56,7 +56,7 @@ jobs:
         with:
           timeout_minutes: 25
           max_attempts: 2
-          command: python -m src.main collect vivareal chavesnamao imovelweb zapimoveis
+          command: python -m src.main collect vivareal chavesnamao zapimoveis
 
   normalize:
     needs: collect

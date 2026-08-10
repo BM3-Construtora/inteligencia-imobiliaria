@@ -350,11 +350,16 @@ def main() -> None:
     if command == "collect":
         names = args[1:] if len(args) > 1 else None
         if names:
-            for n in names:
-                if n in RETIRED_COLLECTORS:
-                    raise SystemExit(
-                        f"{n} collector retired. See sql/data analysis: 0/177 active."
-                    )
+            retired = [n for n in names if n in RETIRED_COLLECTORS]
+            for n in retired:
+                logger.warning(
+                    f"{n} collector retired — pulando. See sql/data analysis: 0/177 active."
+                )
+            names = [n for n in names if n not in RETIRED_COLLECTORS]
+            if not names:
+                raise SystemExit(
+                    "Nenhum collector válido: todos os solicitados estão aposentados."
+                )
         asyncio.run(run_collectors(names))
     elif command == "normalize":
         run_normalize()

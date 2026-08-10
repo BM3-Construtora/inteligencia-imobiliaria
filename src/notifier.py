@@ -301,13 +301,11 @@ def _fetch_price_drops(db: Any) -> list[dict[str, Any]]:
             "from": float(last),
             "to": cur,
         }
-        # Reset flag pra reentrar no fluxo de notify
+        # Não reseta is_notified aqui: o opp já entra na lista processada pelo
+        # loop principal, que grava is_notified=True + novo last_notified_price
+        # só após o envio confirmado. Resetar antes deixaria a opp presa em
+        # is_notified=False (renotificável) caso o envio falhasse.
         drops.append(opp)
-        # Limpa flag pra evitar dupla notif na mesma run
-        try:
-            db.table("opportunities").update({"is_notified": False}).eq("id", opp["id"]).execute()
-        except Exception:
-            pass
     return drops
 
 
