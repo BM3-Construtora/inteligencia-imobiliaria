@@ -38,6 +38,11 @@ class TocaCollector(BaseCollector):
     source = "toca"
 
     async def fetch_all(self) -> list[dict[str, Any]]:
+        if not TOCA_ANON_KEY or not TOCA_SUPABASE_URL:
+            raise RuntimeError(
+                "TOCA_ANON_KEY/TOCA_SUPABASE_URL não configuradas — "
+                "defina os secrets/env vars para coletar da Toca."
+            )
         all_items: list[dict[str, Any]] = []
         filtered_other_city = 0
         headers = {

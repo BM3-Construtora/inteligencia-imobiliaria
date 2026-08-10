@@ -94,6 +94,7 @@ Comandos:
   heritage               Detector de herança: obituários × TJSP × listings
   embed                  Gera embeddings text-embedding-004 para listings e documentos
   vision-listings        Analisa fotos de anúncios via Gemini Vision (conservation score)
+  health-check           Inspeciona agent_runs (24h) e alerta no Telegram se coletor quebrou
 """.strip()
 
 
@@ -651,6 +652,14 @@ def main() -> None:
         logger.info(f"=== Starting listing vision (limit={limit}) ===")
         s = run_vision_listings(limit=limit)
         logger.info(f"=== vision-listings done: {s} ===")
+    elif command == "health-check":
+        from src.health import run_health_check
+        logger.info("=== Starting health-check ===")
+        s = run_health_check()
+        logger.info(
+            f"=== health-check done: {s['checked']} agentes, "
+            f"{s['problems']} problema(s) ==="
+        )
     else:
         print(f"Comando desconhecido: {command}")
         print(USAGE)

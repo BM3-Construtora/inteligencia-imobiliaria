@@ -8,15 +8,12 @@ load_dotenv()
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
-# Toca Imóveis — os.getenv retorna "" quando secret não existe no GitHub Actions,
-# por isso usamos `or` para cair no default.
-TOCA_SUPABASE_URL = (
-    os.getenv("TOCA_SUPABASE_URL") or "https://jveljofutivtmufzmiej.supabase.co"
-)
-TOCA_ANON_KEY = (
-    os.getenv("TOCA_ANON_KEY")
-    or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2ZWxqb2Z1dGl2dG11ZnptaWVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY3NDA0NzYsImV4cCI6MjA3MjMxNjQ3Nn0.Jl4X9G3Uy-4FrBRiQdVZ7Zvv0tHsg4VEq1mou1yofK0"
-)
+# Toca Imóveis — credenciais de terceiro. Nunca versionar a anon key aqui:
+# defina TOCA_SUPABASE_URL e TOCA_ANON_KEY no .env / GitHub Secrets. Vazio =
+# coletor Toca falha com mensagem clara (ver src/collectors/toca.py), sem
+# derrubar o resto do pipeline no import.
+TOCA_SUPABASE_URL = os.getenv("TOCA_SUPABASE_URL", "").strip()
+TOCA_ANON_KEY = os.getenv("TOCA_ANON_KEY", "").strip()
 
 # União / DreamKeys
 UNIAO_API_URL = (

@@ -308,8 +308,9 @@ SOURCE_CONFIDENCE = {
     "uniao": 1.00,       # Tier 1: GPS, endereço, MCMV flag, API estruturada
     "toca": 1.00,        # Tier 1: GPS, preço 100%, zona do bairro
     "vivareal": 0.85,    # Tier 2: bons dados preço/área, sem geo
+    "zapimoveis": 0.85,  # Tier 2: JSON-LD estruturado, bons dados preço/área
     "chavesnamao": 0.80,  # Tier 2: muitos terrenos, área ~52% confiável
-    "imovelweb": 0.70,   # Tier 3: poucos dados, área 32%, Cloudflare
+    # imovelweb aposentado 2026-05-11 (Cloudflare bloqueia ~100%) — sem peso.
 }
 
 

@@ -304,7 +304,6 @@ jobs:
     steps:
       - name: Build summary
         run: |
-          mkdir -p out
           {
             echo "# MaríliaBot Pipeline Summary"
             echo ""
@@ -326,9 +325,20 @@ jobs:
             echo "| viability  | ${{ needs.viability.result }} |"
             echo "| comps      | ${{ needs.comps.result }} |"
             echo "| notify     | ${{ needs.notify.result }} |"
-          } > out/summary.md
-          cat out/summary.md
-      - uses: actions/upload-artifact@v4
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+
+  health-check:
+    needs: summary
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: pipeline-summary
-          path: out/summary.md
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -e .
+      - name: Inspeciona agent_runs e alerta se coletor quebrou
+        run: python -m src.main health-check
