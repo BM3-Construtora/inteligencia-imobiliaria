@@ -57,6 +57,11 @@ jobs:
           # SSL via env, sem mexer na URL (o pooler do Supabase exige TLS).
           PGSSLMODE: require
         run: |
+          echo "url_len=${#SUPABASE_DB_URL}"
+          case "$SUPABASE_DB_URL" in
+            postgresql://*|postgres://*) echo "scheme=ok" ;;
+            *) echo "scheme=MISSING — o secret não começa com postgresql://" ;;
+          esac
           CNT=$(psql "$SUPABASE_DB_URL" -tAc "select count(*) from supabase_migrations.schema_migrations")
           CNT=$(echo "$CNT" | tr -d '[:space:]')
           echo "schema_migrations registradas: '$CNT'"
