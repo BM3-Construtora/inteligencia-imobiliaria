@@ -53,6 +53,10 @@ def run_hunter() -> dict[str, int]:
             .eq("property_type", "land")
             .not_.is_("sale_price", "null")
             .gt("sale_price", 5000)  # Filter out placeholder/error prices
+            # Exclui itens em quarentena (ppm2/área/price implausíveis marcados
+            # pelo normalizer). Sem isto, erros de parse de área — que geram
+            # preço/m² minúsculo — recebem nota máxima e viram falsos "quentes".
+            .or_("quarantined.is.false,quarantined.is.null")
             .execute()
         )
 

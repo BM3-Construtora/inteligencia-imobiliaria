@@ -45,7 +45,7 @@ def run_notifier() -> dict[str, int]:
                 "id, listing_id, score, score_breakdown, reason, "
                 "listing:listings(id, source, title, neighborhood, address, "
                 "sale_price, total_area, price_per_m2, bedrooms, is_mcmv, "
-                "main_image_url, url, latitude, longitude, canonical_listing_id)"
+                "main_image_url, url, latitude, longitude, canonical_listing_id, quarantined)"
             )
             .eq("is_notified", False)
             .gte("score", MIN_SCORE_NOTIFY)
@@ -86,6 +86,18 @@ def run_notifier() -> dict[str, int]:
             if isinstance(listing, list):
                 listing = listing[0] if listing else None
             if not listing:
+                continue
+
+            # Anti-ruído: nunca dispara item em quarentena (ppm2/área implausível).
+            # Marca como notificado pra não reavaliar toda run.
+            if listing.get("quarantined"):
+                logger.info(
+                    f"[notifier] Skipping #{opp['id']} — listing {listing.get('id')} em quarentena"
+                )
+                db.table("opportunities").update({
+                    "is_notified": True,
+                    "notified_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", opp["id"]).execute()
                 continue
 
             # Anti-ruído: pula listings canônicos (cópias) — se já notifiquei o
@@ -267,7 +279,7 @@ def _fetch_price_drops(db: Any) -> list[dict[str, Any]]:
                 "id, listing_id, score, score_breakdown, reason, "
                 "listing:listings(id, source, title, neighborhood, address, "
                 "sale_price, total_area, price_per_m2, bedrooms, is_mcmv, "
-                "main_image_url, url, latitude, longitude, canonical_listing_id)"
+                "main_image_url, url, latitude, longitude, canonical_listing_id, quarantined)"
             )
             .eq("is_notified", True)
             .gte("score", MIN_SCORE_NOTIFY)
