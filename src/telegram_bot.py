@@ -38,6 +38,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/construtora <nome> — Rating de uma construtora (obras, prazo, risco)\n"
         "/viabilidade <preco> <area> — Simular projeto MCMV\n"
         "/ficha <endereco|CEP|coord|URL> — Ficha completa do terreno\n"
+        "/regras <pergunta> — Pergunte sobre zoneamento/CMDU/EIV/Plano Diretor\n"
         "/mercado — Resumo geral do mercado\n"
         "/relatorio — Relatorio semanal completo\n"
         "/deal_add <listing_id> <stage> — Registrar visita/oferta\n"
@@ -126,6 +127,23 @@ async def cmd_viabilidade(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def cmd_regras(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Regulatory RAG over municipal documents (CMDU, alvarás, EIV, Plano Diretor)."""
+    if not context.args:
+        await update.message.reply_text(
+            "Use: /regras <pergunta>\n"
+            "Exemplo: /regras qual o zoneamento do Jardim America?"
+        )
+        return
+
+    question = " ".join(context.args)
+    await update.message.reply_text("Consultando documentos municipais...")
+    from src.telegram.rag import answer_regulatory_question
+    text = answer_regulatory_question(question)
+    for chunk in _split_message(text):
+        await update.message.reply_text(chunk, parse_mode="Markdown", disable_web_page_preview=True)
+
+
 async def cmd_mercado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Market summary."""
     await update.message.reply_text("Buscando dados do mercado...")
@@ -211,6 +229,9 @@ def run_bot() -> None:
     from src.telegram.handlers_ficha import cmd_ficha, handle_location
     app.add_handler(CommandHandler("ficha", cmd_ficha))
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
+
+    # RAG regulatório (CMDU, alvarás, EIV, Plano Diretor)
+    app.add_handler(CommandHandler("regras", cmd_regras))
 
     # Track D — bm3_deals + calibration
     from src.telegram.handlers_deals import (
